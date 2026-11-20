@@ -52,6 +52,22 @@ impl EsSource {
                 .map_err(|e| Error::msg(format!("invalid --api-key: {e}")))?;
             headers.insert(reqwest::header::AUTHORIZATION, value);
         }
+        match (cfg.api_key.as_deref(), cfg.user.as_deref()) {
+            (Some(_), Some(_)) => {
+                return Err(Error::msg(
+                    "pass either --api-key or --user/--password, not both",
+                ));
+            }
+            (None, Some(user)) => {
+                let password = cfg.password.as_deref().ok_or_else(|| {
+                    Error::msg("--user needs --password (or use --api-key)")
+                })?;
+                let value = reqwest::header::HeaderValue::from_str(&basic_auth(user, password))
+                    .map_err(|e| Error::msg(format!("invalid --user/--password: {e}")))?;
+                headers.insert(reqwest::header::AUTHORIZATION, value);
+            }
+            _ => {}
+        }
         let client = reqwest::Client::builder()
             .default_headers(headers)
             .danger_accept_invalid_certs(cfg.insecure)
@@ -379,6 +395,36 @@ fn merge_into(out: &mut BTreeMap<String, Ty>, name: &str, ty: Ty) {
     }
 }
 
+/// `Authorization: Basic` without pulling in another crate: RFC 4648 base64 of
+/// `user:password`.
+fn basic_auth(user: &str, password: &str) -> String {
+    format!("Basic {}", base64(format!("{user}:{password}").as_bytes()))
+}
+
+fn base64(input: &[u8]) -> String {
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(input.len().div_ceil(3) * 4);
+    for chunk in input.chunks(3) {
+        let b0 = chunk[0] as u32;
+        let b1 = *chunk.get(1).unwrap_or(&0) as u32;
+        let b2 = *chunk.get(2).unwrap_or(&0) as u32;
+        let triple = (b0 << 16) | (b1 << 8) | b2;
+        out.push(TABLE[(triple >> 18) as usize & 0x3f] as char);
+        out.push(TABLE[(triple >> 12) as usize & 0x3f] as char);
+        out.push(if chunk.len() > 1 {
+            TABLE[(triple >> 6) as usize & 0x3f] as char
+        } else {
+            '='
+        });
+        out.push(if chunk.len() > 2 {
+            TABLE[triple as usize & 0x3f] as char
+        } else {
+            '='
+        });
+    }
+    out
+}
+
 fn urlencode(s: &str) -> String {
     s.chars()
         .map(|c| match c {
@@ -522,6 +568,17 @@ mod tests {
         assert!(paths.iter().any(|p| p.contains("_mapping")));
         assert!(paths.iter().any(|p| p.contains("_search/scroll")));
         handle.abort();
+    }
+
+    #[test]
+    fn basic_auth_encodes_user_and_password() {
+        assert_eq!(basic_auth("user", "pass"), "Basic dXNlcjpwYXNz");
+        assert_eq!(basic_auth("a", "b"), "Basic YTpi");
+        assert_eq!(base64(b""), "");
+        assert_eq!(base64(b"f"), "Zg==");
+        assert_eq!(base64(b"fo"), "Zm8=");
+        assert_eq!(base64(b"foo"), "Zm9v");
+        assert_eq!(base64(b"foob"), "Zm9vYg==");
     }
 
     #[test]
