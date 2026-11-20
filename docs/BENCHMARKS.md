@@ -22,12 +22,17 @@ Command: `ROWS=5000000 bench/run.sh`
 | Parquet (zstd 3) | 42,947,091 B |
 | Ratio vs raw CSV | **8.97×** |
 | Ratio vs `gzip -6` | **2.07×** |
-| Wall clock | 8.57 s |
-| Throughput | **583,000 rows/s** (45 MB/s of CSV) |
-| Peak RSS | **41,320 KiB** |
+| Wall clock | 7.83 s |
+| Throughput | **638,000 rows/s** (49 MB/s of CSV) |
+| Peak RSS | **40,924 KiB** |
 
 Peak RSS is flat in the number of rows because the engine streams 8,192-row
 batches: memory is a function of row width, not of input size.
+
+Run-to-run spread on this machine is roughly 7.8–8.6 s for the same binary and
+input (CPU frequency and page cache); treat the throughput as ~600k rows/s, not
+as a single fixed number. The quoted run is the one after the per-cell coercion
+fix (each value is coerced once and moved, not cloned twice).
 
 Reproduce and verify:
 
