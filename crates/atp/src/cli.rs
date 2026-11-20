@@ -258,7 +258,9 @@ fn split_url(raw: &str) -> (String, Option<String>) {
 }
 
 async fn inspect(args: InspectArgs) -> Result<()> {
-    let cfg = config_from(&args.source, Path::new("."))?;
+    let mut cfg = config_from(&args.source, Path::new("."))?;
+    // A preview must not leave scroll checkpoints behind in the caller's cwd.
+    cfg.es.checkpoint_dir = std::env::temp_dir().join("atp-inspect");
     let preview = engine::preview(cfg, args.limit).await?;
     if args.json {
         let payload = serde_json::json!({

@@ -183,6 +183,9 @@ pub struct BatchBuilder {
     rows: usize,
     max_rows: usize,
     record: u64,
+    /// Coerced row, reused across pushes so a value is coerced once and no
+    /// per-cell temporary is allocated.
+    scratch: Vec<Value>,
 }
 
 impl BatchBuilder {
@@ -196,6 +199,7 @@ impl BatchBuilder {
             rows: 0,
             max_rows: max_rows.max(1),
             record: 0,
+            scratch: Vec::new(),
         }
     }
 

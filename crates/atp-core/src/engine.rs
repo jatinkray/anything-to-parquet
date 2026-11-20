@@ -161,9 +161,9 @@ pub async fn run(
             map.rebuild(&schema, &page.columns);
             last_columns = page.columns.clone();
         }
-        for row in page.rows {
+        for mut row in page.rows {
             rows_read += 1;
-            map.translate(&row, &mut translate_buf);
+            map.translate(&mut row, &mut translate_buf);
             loop {
                 match builder.push(&translate_buf, opts.strict) {
                     Ok(PushOutcome::Accepted) => break,
@@ -317,15 +317,15 @@ impl ColumnMap {
         self.width = schema.fields.len();
     }
 
-    fn translate(&self, row: &[Value], out: &mut Vec<Value>) {
+    /// Move values out of a source row into schema order. The row is owned by
+    /// the caller, so cells can be taken by value instead of cloned.
+    fn translate(&self, row: &mut [Value], out: &mut Vec<Value>) {
         out.clear();
         out.resize(self.width, Value::Null);
         for (ci, slot) in self.to_schema.iter().enumerate() {
-            if let Some(schema_idx) = slot {
-                if let Some(v) = row.get(ci) {
-                    if let Some(cell) = out.get_mut(*schema_idx) {
-                        *cell = v.clone();
-                    }
+            if let (Some(schema_idx), Some(cell_src)) = (slot, row.get_mut(ci)) {
+                if let Some(cell) = out.get_mut(*schema_idx) {
+                    *cell = std::mem::replace(cell_src, Value::Null);
                 }
             }
         }
