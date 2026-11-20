@@ -1,7 +1,11 @@
 [advisories]
 version = 2
 yanked = "warn"
-ignore = []
+ignore = [
+    # chrono is a mandatory dependency of arrow/parquet 60; the advisory is
+    # "unmaintained", not a vulnerability, and no fixed version exists.
+    { id = "RUSTSEC-2026-0543", reason = "transitive dependency of arrow 60; unmaintained, not exploitable" },
+]
 
 [licenses]
 version = 2
