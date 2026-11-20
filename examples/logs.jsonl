@@ -1,0 +1,6 @@
+{"@timestamp": "2026-11-21T10:00:00Z", "service": {"name": "api-0"}, "http": {"status": 500, "path": "/v1/items", "bytes": 512}, "message": "request handled", "tags": ["prod", "eu"]}
+{"@timestamp": "2026-11-21T10:01:00Z", "service": {"name": "api-1"}, "http": {"status": 200, "path": "/v1/items", "bytes": 513}, "message": "request handled", "tags": ["prod", "eu"]}
+{"@timestamp": "2026-11-21T10:02:00Z", "service": {"name": "api-0"}, "http": {"status": 200, "path": "/v1/items", "bytes": 514}, "message": "request handled", "tags": ["prod", "eu"]}
+{"@timestamp": "2026-11-21T10:03:00Z", "service": {"name": "api-1"}, "http": {"status": 500, "path": "/v1/items", "bytes": 515}, "message": "request handled", "tags": ["prod", "eu"]}
+{"@timestamp": "2026-11-21T10:04:00Z", "service": {"name": "api-0"}, "http": {"status": 200, "path": "/v1/items", "bytes": 516}, "message": "request handled", "tags": ["prod", "eu"]}
+{"@timestamp": "2026-11-21T10:05:00Z", "service": {"name": "api-1"}, "http": {"status": 200, "path": "/v1/items", "bytes": 517}, "message": "request handled", "tags": ["prod", "eu"]}
