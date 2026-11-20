@@ -100,14 +100,28 @@ added the same way, typed from the first non-null value seen.
   with its own context, which keeps context lifetimes short.
 - An expired scroll context is a hard error naming the slice; silently restarting
   would duplicate or skip rows.
-- **No crash-safe resume in v0.1.** A scroll checkpoint may only be advanced once
-  every row it covers is durable, which requires a file barrier (flush the batch,
-  close and fsync the partition files, then record `scroll_id`). Without that
-  barrier a checkpoint advances past rows that live only in an unflushed
-  ArrowWriter, so a crash would lose them while claiming progress. The barrier
-  design, with an output-directory sequence offset so resumed runs never
-  overwrite earlier files, is the v0.2 plan; until it ships the flag does not
-  exist rather than existing unsafely.
+- **No crash-safe resume in v0.1, and a scroll checkpoint cannot provide one.**
+  Two independent reasons, the second learned by measurement:
+
+  1. Rows are only durable once a Parquet file is closed. A checkpoint written
+     after each page would claim progress for rows sitting in an unflushed
+     `ArrowWriter`, so a crash would lose them.
+  2. Even with a durability barrier (flush, close, rename, then write the
+     checkpoint) the scroll context is a **server-side cursor advanced when the
+     request is served**. A process that dies after issuing page *N* but before
+     persisting it has already moved the cursor past page *N*; resuming from the
+     saved `scroll_id` starts at page *N+1*.
+
+  Measured against Elasticsearch 9.1.0 (50,000 docs, page 20, barrier every 2
+  pages): the barrier invariant held exactly (169 closed files, 6,760 rows in the
+  checkpoint, 6,760 rows on disk), the crash lost the in-flight page, and the
+  resumed union had 49,980 rows — 20 missing, none duplicated. The gap equals the
+  page size.
+
+  The v0.2 design therefore moves to PIT + `search_after` with a stable total
+  order (idempotent re-issue), or time-window slicing as the operator-visible
+  fallback. A scroll-id checkpoint is not salvageable; until one of those ships
+  the flag does not exist rather than existing unsafely.
 
 ## Sink
 
