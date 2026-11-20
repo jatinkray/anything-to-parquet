@@ -70,8 +70,9 @@ cargo install --path crates/atp        # or: cargo build --release
 ./target/release/atp --help
 ```
 
-Linux, macOS and Windows. The release profile is a single static binary with no
-runtime dependencies (musl build in CI).
+Linux is what CI builds and tests (including a static x86_64-musl binary); macOS
+and Windows build from source with the same toolchain and are not exercised in
+CI yet. No runtime dependencies.
 
 ## A five minute tour
 
@@ -88,6 +89,9 @@ atp verify ./lake
 # 4. Query it with whatever you already have.
 duckdb -c "SELECT dt, count(*) FROM read_parquet('./lake/**/*.parquet', hive_partitioning=true) GROUP BY 1 ORDER BY 1"
 ```
+
+Flattened JSON columns keep their dots (`http.status`), so quote them in SQL:
+`SELECT sum("http.status") FROM read_parquet(…)`.
 
 Sample output:
 

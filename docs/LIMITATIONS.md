@@ -28,6 +28,8 @@ flag that silently does something else.
 - Field names are used verbatim; there is no sanitising pass for names that
   conflict after flattening (`a.b` as a literal key vs `a: {b}`).
 - Map/struct columns are flattened; Parquet `MAP`/`STRUCT` are not emitted.
+- Flattened names contain dots (`http.status`). Most engines need them quoted
+  (`"http.status"`); a bare `http.status` reads as table `http`, column `status`.
 
 ## Elasticsearch
 
@@ -37,10 +39,13 @@ flag that silently does something else.
 - **Auth is basic or API key.** No OIDC/SAML/cloud-signed requests.
 - **Dynamic fields are discovered per page.** If a field appears only after
   millions of documents, earlier files lack it (schema segments record this).
-- **No crash-safe resume.** A conversion that dies starts over. Resuming a scroll
-  safely needs a durability barrier (rows on disk before the checkpoint moves),
-  which v0.1 does not implement; the design is in `docs/DESIGN.md`. Use `--query`
-  time windows and one output directory per window for large backfills.
+- **No crash-safe resume, and scroll cannot support one.** Rows must be durable
+  before a checkpoint moves, *and* the scroll cursor advances when the request is
+  served, not when the page is written — so a crash loses the in-flight page even
+  with a file barrier (measured: 20 of 50,000 rows missing, none duplicated).
+  v0.1 ships without the flag. Use `--query` time windows and one output directory
+  per window for large backfills; the PIT + `search_after` design is in
+  `docs/DESIGN.md`.
 - **An expired scroll context aborts the run** with the slice number; the error
   is not retried automatically.
 - **No `_id`, `_index`, `_score` columns** unless they appear in `_source`.
