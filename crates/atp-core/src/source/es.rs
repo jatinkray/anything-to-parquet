@@ -59,9 +59,10 @@ impl EsSource {
                 ));
             }
             (None, Some(user)) => {
-                let password = cfg.password.as_deref().ok_or_else(|| {
-                    Error::msg("--user needs --password (or use --api-key)")
-                })?;
+                let password = cfg
+                    .password
+                    .as_deref()
+                    .ok_or_else(|| Error::msg("--user needs --password (or use --api-key)"))?;
                 let value = reqwest::header::HeaderValue::from_str(&basic_auth(user, password))
                     .map_err(|e| Error::msg(format!("invalid --user/--password: {e}")))?;
                 headers.insert(reqwest::header::AUTHORIZATION, value);
