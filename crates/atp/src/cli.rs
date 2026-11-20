@@ -1,7 +1,7 @@
 //! Command line surface. Everything here is argument parsing plus a thin
 //! presentation layer over `atp_core`.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -87,9 +87,6 @@ pub struct EsArgs {
     /// Slices to walk sequentially (one checkpoint per slice)
     #[arg(long, default_value_t = 1)]
     pub slices: usize,
-    /// Continue from the checkpoint in the output directory
-    #[arg(long)]
-    pub resume: bool,
     /// Accept self-signed certificates
     #[arg(long)]
     pub insecure: bool,
@@ -173,14 +170,10 @@ pub async fn run(cli: Cli) -> Result<()> {
     }
 }
 
-pub fn checkpoint_dir(out: &Path) -> PathBuf {
-    out.join(".atp")
-}
-
 /// Build a source config from CLI arguments. A URL of the form
 /// `https://host:9200/index` splits into base URL + index; `--url`/`--index`
 /// override it.
-pub fn config_from(source_args: &SourceArgs, out: &Path) -> Result<SourceConfig> {
+pub fn config_from(source_args: &SourceArgs) -> Result<SourceConfig> {
     let raw = source_args.source.trim();
     if raw.is_empty() {
         return Err(Error::msg("source is empty"));
@@ -234,8 +227,6 @@ pub fn config_from(source_args: &SourceArgs, out: &Path) -> Result<SourceConfig>
             scroll: source_args.es.scroll.clone(),
             page_size: source_args.es.page_size.max(1),
             slices: source_args.es.slices.max(1),
-            checkpoint_dir: checkpoint_dir(out),
-            resume: source_args.es.resume,
             insecure: source_args.es.insecure,
         };
     }
@@ -258,9 +249,7 @@ fn split_url(raw: &str) -> (String, Option<String>) {
 }
 
 async fn inspect(args: InspectArgs) -> Result<()> {
-    let mut cfg = config_from(&args.source, Path::new("."))?;
-    // A preview must not leave scroll checkpoints behind in the caller's cwd.
-    cfg.es.checkpoint_dir = std::env::temp_dir().join("atp-inspect");
+    let cfg = config_from(&args.source)?;
     let preview = engine::preview(cfg, args.limit).await?;
     if args.json {
         let payload = serde_json::json!({
@@ -301,7 +290,7 @@ async fn convert(args: ConvertArgs) -> Result<()> {
         .ok_or_else(|| Error::msg(format!("unknown --partition `{}`", args.partition)))?;
     let compression = Compression::parse(&args.compression)
         .ok_or_else(|| Error::msg(format!("unknown --compression `{}`", args.compression)))?;
-    let cfg = config_from(&args.source, &args.out)?;
+    let cfg = config_from(&args.source)?;
     if !matches!(partition, Partition::None) && cfg.timestamp_column.is_none() {
         return Err(Error::msg(
             "time partitioning needs --timestamp <column>; pass --partition none to skip",
@@ -478,7 +467,7 @@ mod tests {
             sample_rows: 10_000,
             es: EsArgs::default(),
         };
-        let err = config_from(&args, Path::new("/tmp")).expect_err("needs index");
+        let err = config_from(&args).expect_err("needs index");
         assert!(err.to_string().contains("index"));
     }
 }

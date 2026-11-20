@@ -96,13 +96,18 @@ added the same way, typed from the first non-null value seen.
 - Scroll: initial `POST /{index}/_search?scroll=…` (sorted by `_doc`, optional
   `slice`), then `POST /_search/scroll`. **The initial page is used**, not
   discarded — a bug the monkey-patched stub test caught during development.
-- Checkpoints: `<out>/.atp/checkpoint-<sanitized-index>.json` after every page
-  (`scroll_id`, `slice`, `slices`, `rows_fetched`, query hash). `--resume` only
-  accepts a checkpoint whose index and query hash match.
-- An expired scroll context is a hard error with a message that tells the user to
-  rerun without `--resume`; silently restarting would duplicate rows.
-- Slices are walked sequentially in v0.1. Parallel slices are a later change
-  because they need per-slice output files to stay resumable.
+- Slices are walked sequentially in v0.1; each slice is a separate scrolled walk
+  with its own context, which keeps context lifetimes short.
+- An expired scroll context is a hard error naming the slice; silently restarting
+  would duplicate or skip rows.
+- **No crash-safe resume in v0.1.** A scroll checkpoint may only be advanced once
+  every row it covers is durable, which requires a file barrier (flush the batch,
+  close and fsync the partition files, then record `scroll_id`). Without that
+  barrier a checkpoint advances past rows that live only in an unflushed
+  ArrowWriter, so a crash would lose them while claiming progress. The barrier
+  design, with an output-directory sequence offset so resumed runs never
+  overwrite earlier files, is the v0.2 plan; until it ships the flag does not
+  exist rather than existing unsafely.
 
 ## Sink
 
@@ -176,11 +181,12 @@ opt out explicitly).
 ## Testing strategy
 
 - Unit: lattice symmetry, coercion, schema hashing, flattening, CSV inference
-  quirks (leading zeros), JSONL late keys, checkpoint sanitisation, sink
-  partitioning and file caps, TUI state transitions.
+  quirks (leading zeros), JSONL late keys, sink partitioning and file caps, TUI
+  state transitions, scroll URL construction.
 - Stub-server tests: `EsSource` runs against a scripted HTTP server implementing
   `_mapping`, `_count`, `_stats/store`, `_search`, `_search/scroll` and scroll
-  deletion — including resume-from-checkpoint with no fresh search.
+  deletion, including a URL-shape assertion (no `//_search`) added after a real
+  Elasticsearch run rejected the malformed path that the stub had tolerated.
 - Integration (`crates/atp-core/tests/convert.rs`): conversions are read back
   with an independent Parquet reader; row counts, column names, partition dirs,
   byte-identical reruns, strict/loose widening, `dt=_unknown`, `--max-rows`.

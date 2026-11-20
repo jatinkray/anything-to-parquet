@@ -98,7 +98,7 @@ async fn event_loop(terminal: &mut ratatui::DefaultTerminal, app: &mut App) -> R
             },
             Action::Inspect => {
                 let args = source_args(app);
-                match crate::cli::config_from(&args, std::path::Path::new(".")) {
+                match crate::cli::config_from(&args) {
                     Ok(cfg) => {
                         let tx = tx.clone();
                         app.status = "reading schema and sample rows…".to_string();
@@ -117,7 +117,7 @@ async fn event_loop(terminal: &mut ratatui::DefaultTerminal, app: &mut App) -> R
                 };
                 let out = job.out.clone();
                 let args = source_args(app);
-                match crate::cli::config_from(&args, &out) {
+                match crate::cli::config_from(&args) {
                     Ok(mut cfg) => {
                         if let Some(ts) = job.timestamp_column.clone() {
                             cfg.timestamp_column = Some(ts);

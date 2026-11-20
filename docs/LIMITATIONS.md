@@ -10,7 +10,7 @@ flag that silently does something else.
   different atomicity story; it is deliberately not faked.
 - **No SQLite, MySQL, Postgres, Kafka, S3 log buckets.** Listed as roadmap in
   `atp sources`. Each new source must pass the same conformance tests (schema,
-  pagination, cancellation, checkpoint) before it ships.
+  pagination and cancellation) before it ships.
 - **CSV needs a header.** Headerless files are rejected rather than guessed.
 - **CSV inference samples the first `--sample-rows` rows** (default 10,000).
   Later rows can widen a column (and that is recorded per file), but the first
@@ -32,19 +32,22 @@ flag that silently does something else.
 ## Elasticsearch
 
 - **Scroll API only** (no PIT/search_after). Works against 7.x–9.x and OpenSearch.
-- **Slices run sequentially**, with a checkpoint per slice. No parallel
-  fetching, so a single large index is bounded by one connection.
+- **Slices run sequentially.** No parallel fetching, so a single large index is
+  bounded by one connection.
 - **Auth is basic or API key.** No OIDC/SAML/cloud-signed requests.
 - **Dynamic fields are discovered per page.** If a field appears only after
   millions of documents, earlier files lack it (schema segments record this).
-- **An expired scroll context aborts the run.** `--resume` cannot resume a dead
-  context; the error says so. Restarting a slice needs a fresh run (into a fresh
-  output directory if you care about not mixing partial runs).
+- **No crash-safe resume.** A conversion that dies starts over. Resuming a scroll
+  safely needs a durability barrier (rows on disk before the checkpoint moves),
+  which v0.1 does not implement; the design is in `docs/DESIGN.md`. Use `--query`
+  time windows and one output directory per window for large backfills.
+- **An expired scroll context aborts the run** with the slice number; the error
+  is not retried automatically.
 - **No `_id`, `_index`, `_score` columns** unless they appear in `_source`.
 - **Nested documents are not un-nested** into separate rows (one row per
   `_source`, arrays as JSON text).
-- **No delta/incremental sync.** The checkpoint resumes an interrupted scroll; it
-  does not track "everything since last run" across separate runs.
+- **No delta/incremental sync.** Each run is an independent query; there is no
+  "everything since last run" tracking.
 
 ## Output
 
@@ -60,6 +63,9 @@ flag that silently does something else.
   `schemas[]`.
 - **`--max-file-rows` and the open-file cap can produce more, smaller files**
   than a perfect planner would. No compaction command yet.
+- **One run per output directory.** Names are deterministic (`part-<segment>-<seq>`),
+  so a second run into the same directory replaces same-named files and rewrites
+  `_manifest.json`. Use a fresh `--out` per run when the inputs differ.
 - **No encryption at rest / column-level redaction.** PII handling is the
   operator's job; a redaction pass is a candidate feature, not present.
 
@@ -71,7 +77,7 @@ flag that silently does something else.
 - **No progress output for the final in-flight bytes**: bytes count when a file
   closes or a row group flushes, so progress can look flat for the first 100k
   rows of a partition.
-- **No retry/resume for CSV/JSONL.** Rerun from scratch; the manifest and hashes
+- **No retry/resume for any source.** Rerun from scratch; the manifest and hashes
   let you tell whether the previous run was complete.
 - **No backpressure to Elasticsearch beyond page size.** Very small pages and a
   high slice count will hammer a cluster; use `--page-size`.
