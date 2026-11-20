@@ -89,6 +89,9 @@ atp verify ./lake
 duckdb -c "SELECT dt, count(*) FROM read_parquet('./lake/**/*.parquet', hive_partitioning=true) GROUP BY 1 ORDER BY 1"
 ```
 
+Flattened JSON columns keep their dots (`http.status`), so quote them in SQL:
+`SELECT sum("http.status") FROM read_parquet(…)`.
+
 Sample output:
 
 ```

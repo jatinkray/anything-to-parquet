@@ -28,6 +28,8 @@ flag that silently does something else.
 - Field names are used verbatim; there is no sanitising pass for names that
   conflict after flattening (`a.b` as a literal key vs `a: {b}`).
 - Map/struct columns are flattened; Parquet `MAP`/`STRUCT` are not emitted.
+- Flattened names contain dots (`http.status`). Most engines need them quoted
+  (`"http.status"`); a bare `http.status` reads as table `http`, column `status`.
 
 ## Elasticsearch
 
