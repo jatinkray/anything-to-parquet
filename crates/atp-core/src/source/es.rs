@@ -2,24 +2,23 @@
 //!
 //! Schema comes from `GET /{index}/_mapping` (the mapping is authoritative:
 //! `keyword` stays text even when every sampled value is numeric). Rows come
-//! from the scroll API with a per-slice checkpoint, so a 300 GB backfill that
-//! dies at hour six resumes instead of starting over.
+//! from the scroll API, page by page, with bounded memory.
 //!
-//! v0.1 walks slices sequentially. Each slice has its own scroll context and
-//! checkpoint entry; parallelism is deliberately left out until the resume
-//! semantics are proven.
+//! v0.1 walks slices sequentially: each slice is one scrolled pass over a
+//! deterministic partition of the index, which keeps individual scroll contexts
+//! short. Parallel slices and crash-safe resume are deliberately left out; see
+//! docs/LIMITATIONS.md for why (a scroll checkpoint cannot be advanced until the
+//! rows it covers are durable, which needs a file barrier this version does not
+//! implement).
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
 
 use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value as Json};
 
 use crate::error::{Error, Result};
 use crate::flatten::flatten_document;
 use crate::value::{merge_ty, Field, Schema, Ty, Value};
-use xxhash_rust::xxh3::xxh3_64;
 
 use super::{EsConfig, Page, Source, SourceConfig, SourceInfo};
 
@@ -37,18 +36,6 @@ pub struct EsSource {
     first_page: Option<Json>,
     scroll_id: Option<String>,
     slice: usize,
-    rows_fetched: u64,
-    checkpoint_path: PathBuf,
-    query_hash: String,
-}
-
-#[derive(Debug, Default, Serialize, Deserialize)]
-struct Checkpoint {
-    index: String,
-    query_hash: String,
-    slice: usize,
-    slices: usize,
-    scroll_id: Option<String>,
     rows_fetched: u64,
 }
 
@@ -69,15 +56,6 @@ impl EsSource {
             .default_headers(headers)
             .danger_accept_invalid_certs(cfg.insecure)
             .build()?;
-        let query_hash = format!(
-            "{:016x}",
-            xxh3_64(
-                format!("{}\u{1f}{}", cfg.index, cfg.query.as_deref().unwrap_or("")).as_bytes()
-            )
-        );
-        let checkpoint_path = cfg
-            .checkpoint_dir
-            .join(format!("checkpoint-{}.json", sanitize(&cfg.index)));
         Ok(EsSource {
             base,
             index: cfg.index.clone(),
@@ -93,8 +71,6 @@ impl EsSource {
             scroll_id: None,
             slice: 0,
             rows_fetched: 0,
-            checkpoint_path,
-            query_hash,
         })
     }
 
@@ -175,38 +151,6 @@ impl EsSource {
         }
     }
 
-    fn load_checkpoint(&self) -> Option<Checkpoint> {
-        let text = std::fs::read_to_string(&self.checkpoint_path).ok()?;
-        let cp: Checkpoint = serde_json::from_str(&text).ok()?;
-        if cp.index == self.index && cp.query_hash == self.query_hash {
-            Some(cp)
-        } else {
-            None
-        }
-    }
-
-    fn save_checkpoint(&self) -> Result<()> {
-        if let Some(dir) = self.checkpoint_path.parent() {
-            std::fs::create_dir_all(dir)?;
-        }
-        let cp = Checkpoint {
-            index: self.index.clone(),
-            query_hash: self.query_hash.clone(),
-            slice: self.slice,
-            slices: self.cfg.slices.max(1),
-            scroll_id: self.scroll_id.clone(),
-            rows_fetched: self.rows_fetched,
-        };
-        let tmp = self.checkpoint_path.with_extension("json.tmp");
-        std::fs::write(&tmp, serde_json::to_vec_pretty(&cp)?)?;
-        std::fs::rename(&tmp, &self.checkpoint_path)?;
-        Ok(())
-    }
-
-    fn clear_checkpoint(&self) {
-        let _ = std::fs::remove_file(&self.checkpoint_path);
-    }
-
     async fn start_scroll(&mut self) -> Result<()> {
         let mut body = Map::new();
         body.insert("size".into(), json!(self.cfg.page_size));
@@ -224,8 +168,8 @@ impl EsSource {
             body.insert("slice".into(), json!({"id": self.slice, "max": slices}));
         }
         let url = format!(
-            "{}/_search?scroll={}",
-            self.url(""),
+            "{}?scroll={}",
+            self.url("_search"),
             urlencode(&self.cfg.scroll)
         );
         let resp = self.client.post(url).json(&body).send().await?;
@@ -264,7 +208,7 @@ impl EsSource {
         let text = resp.text().await?;
         if status == reqwest::StatusCode::NOT_FOUND {
             return Err(Error::source_err(format!(
-                "scroll context expired for index `{}` (slice {} of {}); rerun without --resume to restart this slice",
+                "scroll context expired for index `{}` (slice {} of {}); rerun the conversion (and narrow --query time windows to keep contexts alive)",
                 self.index,
                 self.slice,
                 self.cfg.slices.max(1)
@@ -313,16 +257,13 @@ impl EsSource {
 #[async_trait]
 impl Source for EsSource {
     fn describe(&self) -> SourceInfo {
-        let mut notes = vec![format!(
+        let notes = vec![format!(
             "index `{}`, scroll {}, page {}, {} slice(s)",
             self.index,
             self.cfg.scroll,
             self.cfg.page_size,
             self.cfg.slices.max(1)
         )];
-        if self.cfg.resume {
-            notes.push("resume enabled".to_string());
-        }
         SourceInfo {
             kind: "elasticsearch".to_string(),
             location: self.base.clone(),
@@ -335,19 +276,6 @@ impl Source for EsSource {
     async fn infer(&mut self) -> Result<Schema> {
         self.mapping_schema().await?;
         self.estimates().await;
-        if self.cfg.resume {
-            if let Some(cp) = self.load_checkpoint() {
-                self.slice = cp.slice;
-                self.rows_fetched = cp.rows_fetched;
-                self.scroll_id = cp.scroll_id;
-                self.started = self.scroll_id.is_some();
-                tracing::info!(
-                    slice = self.slice,
-                    rows = self.rows_fetched,
-                    "resuming from checkpoint"
-                );
-            }
-        }
         Ok(self.schema.clone())
     }
 
@@ -356,7 +284,6 @@ impl Source for EsSource {
         loop {
             if !self.started {
                 if self.slice >= slices {
-                    self.clear_checkpoint();
                     return Ok(None);
                 }
                 self.start_scroll().await?;
@@ -376,15 +303,12 @@ impl Source for EsSource {
                 self.started = false;
                 self.first_page = None;
                 self.scroll_id = None;
-                self.save_checkpoint()?;
                 if self.slice >= slices {
-                    self.clear_checkpoint();
                     return Ok(None);
                 }
                 continue;
             }
             self.rows_fetched += rows.len() as u64;
-            self.save_checkpoint()?;
             let mut rows = rows;
             for row in rows.iter_mut() {
                 row.resize(self.columns.len(), Value::Null);
@@ -402,7 +326,6 @@ impl Source for EsSource {
 
     async fn finish(&mut self) -> Result<()> {
         self.delete_scroll().await;
-        self.clear_checkpoint();
         Ok(())
     }
 }
@@ -454,19 +377,6 @@ fn merge_into(out: &mut BTreeMap<String, Ty>, name: &str, ty: Ty) {
             out.insert(name.to_string(), ty);
         }
     }
-}
-
-fn sanitize(index: &str) -> String {
-    index
-        .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
-                c
-            } else {
-                '_'
-            }
-        })
-        .collect()
 }
 
 fn urlencode(s: &str) -> String {
@@ -584,10 +494,9 @@ mod tests {
             json!({"_scroll_id": "s3", "hits": {"hits": []}}),
         ];
         let (base, seen, handle) = stub_es(pages).await;
-        let dir = std::env::temp_dir().join(format!("atp-es-{}", std::process::id()));
         let mut cfg = SourceConfig::new(SourceKind::Es, base);
         cfg.timestamp_column = Some("@timestamp".to_string());
-        cfg.es = EsConfig::new("logs-2026", dir.clone());
+        cfg.es = EsConfig::new("logs-2026");
         let mut src = EsSource::new(&cfg).expect("new");
         let schema = src.infer().await.expect("infer");
         assert_eq!(schema.index_of("@timestamp"), Some(0));
@@ -601,52 +510,17 @@ mod tests {
 
         let p1 = src.next_page(1000).await.expect("page").expect("some");
         assert_eq!(p1.rows.len(), 1);
-        assert!(dir.join("checkpoint-logs-2026.json").exists());
         let p2 = src.next_page(1000).await.expect("page").expect("some");
         assert_eq!(p2.rows.len(), 1);
         assert!(src.next_page(1000).await.expect("page").is_none());
         src.finish().await.expect("finish");
-        assert!(!dir.join("checkpoint-logs-2026.json").exists());
         let paths = seen.lock().expect("seen").clone();
+        assert!(
+            paths.iter().any(|p| p.starts_with("/logs-2026/_search")),
+            "search URL must not contain a double slash: {paths:?}"
+        );
         assert!(paths.iter().any(|p| p.contains("_mapping")));
         assert!(paths.iter().any(|p| p.contains("_search/scroll")));
-        handle.abort();
-    }
-
-    #[tokio::test]
-    async fn resume_uses_checkpoint_slice_and_scroll_id() {
-        let pages =
-            vec![json!({"_scroll_id": "s9", "hits": {"hits": [hit("2026-11-21T10:00:00Z", 200)]}})];
-        let (base, seen, handle) = stub_es(pages).await;
-        let dir = std::env::temp_dir().join(format!("atp-es-resume-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).expect("dir");
-        let mut cfg = SourceConfig::new(SourceKind::Es, base);
-        cfg.es = EsConfig::new("logs-2026", dir.clone());
-        cfg.es.resume = true;
-        cfg.es.slices = 2;
-        let probe = EsSource::new(&cfg).expect("probe");
-        let cp = Checkpoint {
-            index: "logs-2026".into(),
-            query_hash: probe.query_hash.clone(),
-            slice: 1,
-            slices: 2,
-            scroll_id: Some("s8".into()),
-            rows_fetched: 10,
-        };
-        std::fs::write(
-            dir.join("checkpoint-logs-2026.json"),
-            serde_json::to_vec(&cp).expect("json"),
-        )
-        .expect("cp");
-
-        let mut src = EsSource::new(&cfg).expect("new");
-        src.infer().await.expect("infer");
-        let page = src.next_page(1000).await.expect("page").expect("some");
-        assert_eq!(page.rows.len(), 1);
-        let paths = seen.lock().expect("seen").clone();
-        // Only the scroll endpoint was needed; no fresh _search with slice 0.
-        assert!(paths.iter().any(|p| p.contains("_search/scroll")));
-        assert!(!paths.iter().any(|p| p.contains("?scroll=")));
         handle.abort();
     }
 
@@ -664,15 +538,9 @@ mod tests {
 
     #[test]
     fn url_is_built_without_double_slashes() {
-        let dir = std::env::temp_dir();
         let mut cfg = SourceConfig::new(SourceKind::Es, "http://es:9200/");
-        cfg.es = EsConfig::new("logs-*", dir);
+        cfg.es = EsConfig::new("logs-*");
         let src = EsSource::new(&cfg).expect("new");
         assert_eq!(src.url("_mapping"), "http://es:9200/logs-*/_mapping");
-    }
-
-    #[test]
-    fn checkpoint_path_is_sanitized() {
-        assert_eq!(sanitize("logs-*"), "logs-_");
     }
 }

@@ -78,8 +78,8 @@ on 2026-11-21; "last push" is the field `pushed_at`.
 | `elasticsearch-dump/elasticsearch-dump` | 7,947 | 2026-11-01 | JS exporter/importer | JSON lines only; no Parquet, no schema, no partitions |
 | `vectordotdev/vector` | 22,922 | 2026-11-20 | Streaming agent | Converts events that flow through it. Parquet encoding for the `aws_s3` sink landed only on 2026-06-01 (issue #1374, open since 2019-12-14). No backfill of an existing index |
 | `duckdb/duckdb` | 43,211 | 2026-11-20 | Analytical engine | `COPY … TO (FORMAT parquet)` is the standard answer for CSV/JSON, but requires SQL and a running engine |
-| `tlinhart/duckdb-elasticsearch` | 23 | 2026-04-29 | DuckDB community extension | Real ES reader (scroll, filter/limit pushdown). Requires SQL; materialises through DuckDB; no partition layout, manifest, resume or verification |
-| `domoritz/arrow-tools` | 210 | 2026-10-01 | `csv2parquet`, `json2parquet` | Single file in, single file out; no partitions, manifest, resume or ES |
+| `tlinhart/duckdb-elasticsearch` | 23 | 2026-04-29 | DuckDB community extension | Real ES reader (scroll, filter/limit pushdown). Requires SQL; materialises through DuckDB; no partition layout, manifest or verification |
+| `domoritz/arrow-tools` | 210 | 2026-10-01 | `csv2parquet`, `json2parquet` | Single file in, single file out; no partitions, manifest or ES |
 | `domoritz/csv2parquet` (standalone) | 77 | 2023-02-02 | Rust CSV→Parquet | **Archived** |
 | `cldellow/csv2parquet` | 65 | 2022-12-08 | Python CSV→Parquet | Abandoned in practice |
 | `rayyildiz/cc2p` | 7 | 2026-11-04 | Rust CSV→Parquet with a TUI | CSV only, folder-level, no manifest/verify/partitions |
@@ -97,8 +97,8 @@ Parquet, so a conversion TUI is not a crowded space.
 There are many ways to *read* Parquet and several single-format *converters*, but
 no maintained tool that takes an operational source (ES index, CSV dump, JSONL
 export), streams it with bounded memory, writes lake-shaped Parquet
-(partitions + zstd + row-group limits), checkpoints long jobs, and emits a
-manifest that lets you prove afterwards what you got.
+(partitions + zstd + row-group limits), bounds memory on inputs it cannot fit,
+and emits a manifest that lets you prove afterwards what you got.
 
 ## 3. Economics, honestly
 
@@ -152,22 +152,83 @@ Common constraint: they want a *file*, not a platform. Every server-side option
 (Logstash, Vector, Datadog pipelines) converts only what flows through it from
 now on; backfill is the missing half.
 
+### 4.1 Demand signals
+
+Counts fetched 2026-11-21; treat them as order-of-magnitude, not precise.
+
+Stack Overflow (`search/advanced`, all terms must match, `filter=total`):
+
+| Query | Questions |
+|---|---:|
+| `csv to parquet` | 1,337 |
+| `export parquet` | 268 |
+| `elasticsearch parquet` | 30 |
+| `jsonl parquet` | 13 |
+
+GitHub issue search (`search/issues`):
+
+| Query | Issues |
+|---|---:|
+| `repo:elastic/elasticsearch parquet` | 708 |
+| `repo:elastic/elasticsearch parquet export` | 21 |
+| `repo:opensearch-project/OpenSearch parquet` | 505 |
+
+Reading: CSV demand is an order of magnitude larger than any single vendor
+question, which is why CSV/JSONL ships in v0.1 alongside Elasticsearch. The
+Elasticsearch counts are inflated by Elastic's own internal Parquet work (below),
+so they overstate end-user questions; the 21 "parquet export" issues are the
+closest signal and they are all engineering traffic, not a product.
+
+### 4.2 The closest thing to a platform threat, and why it is not the same tool
+
+`elastic/elasticsearch#166095` — **"Add Parquet write engine prototype"**, opened
+2026-11-16, still open on 2026-11-21, zero comments at the time of reading:
+
+> "This is a prototype. It is a draft to show the design and to get early
+> feedback. It is not ready to merge." … "A new x-pack plugin,
+> `x-pack/plugin/parquet-write-engine`. An index with `index.storage_format:
+> parquet` gets an engine that stores its documents only as Parquet files in a
+> snapshot repository (`fs` or `s3`). The files are listed as an Apache Iceberg
+> table … The engine implements `Engine#indexBatch`. It needs the `batch_indexing`
+> feature flag, which is off in release builds. The index has no refresh and no
+> search."
+
+Its own constraints: columnar index mode only, no replicas, no indexed fields, no
+multi-fields, no `date_nanos`; field types limited to long/integer/short/byte/
+date/keyword/double/float/boolean; `multi_value: true` becomes a Parquet `LIST`.
+
+Why this does not make the tool unnecessary:
+
+1. It is **write-side for indices created with a Parquet storage format**, not an
+   export path for data already indexed in Lucene.
+2. It is a **storage engine behind an off-by-default feature flag**, with no
+   refresh and no search — not something an operator adopts for existing data.
+3. It is **Elasticsearch-only**; CSV/JSONL dumps, other stores, and estates
+   leaving Elasticsearch get nothing.
+4. It has **no manifest/verify** story for a backfill and no `dt=` partition
+   layout (it relies on Iceberg commits instead).
+
+What it does establish is direction: Elastic is building Parquet + Iceberg as a
+first-class storage shape. That increases the amount of data in Parquet and makes
+"get my history out" a routine request rather than an exotic one.
+
 ## 5. Positioning against the realistic alternatives
 
 | Alternative | Where it wins | Where `atp` wins |
 |---|---|---|
-| DuckDB + `elasticsearch` extension | SQL users, ad-hoc joins | No SQL required; per-window partitions; manifest + verify; resume; single binary |
+| DuckDB + `elasticsearch` extension | SQL users, ad-hoc joins | No SQL required; per-window partitions; manifest + verify; single binary |
 | `elasticdump` + DuckDB | Re-import workflows | One step; typed columns from the ES mapping; no intermediate JSON |
 | Vector | Continuous streaming | Backfill of existing data; lake layout; verification |
 | Spark / ES-Hadoop | Very large estates with an existing cluster | No cluster; unavailable on Serverless anyway; bounded memory on a laptop |
-| `csv2parquet`-class tools | One file, one shot | Partitions, manifest, resume, schema evolution, multiple sources |
+| `csv2parquet`-class tools | One file, one shot | Partitions, manifest, schema evolution, multiple sources |
 
 ## 6. Risks to this thesis
 
 | Risk | Signal to watch | Response |
 |---|---|---|
-| Elastic ships first-party Parquet export | Release notes for ES/Serverless | The tool spans non-Elastic sources; the engine is source-agnostic |
-| DuckDB extension becomes "good enough" | Adoption of the extension, issue traffic | Document the SQL path; differentiate on resume/verify/layout |
+| Elastic ships first-party Parquet export | Prototype for *new* indexed data exists (issue #166095, flagged off, not an exporter) | Ship the export path for existing data and non-ES sources; keep the engine source-agnostic |
+| Iceberg becomes the required commit protocol | Elastic's prototype writes Iceberg tables | Keep Hive-style partitions (readable by every engine); treat an Iceberg commit as an optional later output |
+| DuckDB extension becomes "good enough" | Adoption of the extension, issue traffic | Document the SQL path; differentiate on verification, layout and multi-source support |
 | "Anything" scope creep dilutes quality | Issues asking for 10 new sources | New sources are plugins behind one trait with a conformance test |
 | Compression claims challenged | Anyone re-running `bench/` | Every number reproducible from a script with a pinned dataset hash |
 

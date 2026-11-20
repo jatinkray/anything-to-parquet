@@ -69,6 +69,33 @@ An Elasticsearch index of the same events would be larger than the JSON text
 because it stores postings, doc values and `_source` for search. That comparison
 is not measured here and is not claimed.
 
+## Real Elasticsearch verification (correctness, not throughput)
+
+Run on 2026-11-21 against Elasticsearch **9.1.0** in Docker (single node, no
+security), to check the scroll path against a real server rather than the
+scripted stub.
+
+Fixtures and results:
+
+| Check | Result |
+|---|---|
+| 20,000 documents bulk-indexed into `logs-2026` with an explicit mapping (`date`, `keyword`, `integer`, `long`, `double`, `boolean`, `text`, nested `http` object), nulls every 1,000th doc, `service` missing every 777th | `_count` = 20,000 |
+| `atp convert http://localhost:19200/logs-2026 --out … --timestamp @timestamp --partition day --slices 4 --page-size 500` | 20,000 rows, 1 file, `atp verify` ok |
+| Types derived from the mapping | `@timestamp` timestamp_ms, `http.status` i64, `http.bytes` i64, `latency_ms` f64, `ok` bool, `service`/`message`/`http.path`/`tags` str |
+| Filtered run with `--query '{"range":{"@timestamp":{"gte":"2026-11-21T00:30:00Z"}}}'` | `atp` 12,800 rows; Elasticsearch `_count` with the same query 12,800 |
+| Multi-valued `keyword` (`tags`) | preserved as JSON text, matching the documented array behaviour |
+
+Two defects were found by this run and fixed before release:
+
+1. **Double slash in the search URL.** The initial request went to
+   `/logs-2026//_search`, which Elasticsearch rejects with 400; the stub had
+   accepted it. Fixed, and the stub test now asserts the URL shape.
+2. **Resume could not be made safe at the time.** A scroll checkpoint advanced
+   after each page, but rows only become durable when a Parquet file is closed,
+   so a crash would lose rows while claiming progress. The flag was removed
+   instead of shipped broken; the barrier design is written down in
+   `docs/DESIGN.md` and listed in `docs/LIMITATIONS.md`.
+
 ## What is *not* measured
 
 - Elasticsearch scroll throughput (depends on cluster, shard count, network and

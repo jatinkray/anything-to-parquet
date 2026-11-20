@@ -28,8 +28,8 @@ read. Getting *existing* data there is still hand-rolled.
 | Elastic Cloud **Serverless** has no user-initiated snapshot/restore ("Planned") and **no Elasticsearch-Hadoop** ([comparison table](https://www.elastic.co/docs/deploy-manage/deploy/elastic-cloud/differences-from-other-elasticsearch-offerings)) | On Serverless the only bulk egress is scroll/PIT/ES\|QL, and the Spark route is unavailable |
 | `elasticsearch-dump` has 7.9k stars and exports **JSON only** | The de-facto ES exporter cannot produce columnar files |
 | The only dedicated ES→Parquet repo found is a 1-star Python script last pushed 2023-09 | No maintained product exists for this |
-| `csv2parquet`-style tools are single-purpose; the most-starred one is archived | Nothing unifies sources or adds partitions/manifests/resume |
-| DuckDB's `elasticsearch` community extension (MIT, 23 stars) exists | SQL users have a path — but it needs SQL, materialises through DuckDB, and has no partition layout, manifest or resume |
+| `csv2parquet`-style tools are single-purpose; the most-starred one is archived | Nothing unifies sources or adds partitions, manifests or verification |
+| DuckDB's `elasticsearch` community extension (MIT, 23 stars) exists | SQL users have a path — but it needs SQL, materialises through DuckDB, and has no partition layout, manifest or verification |
 
 Full sources, dates and the competitive scan: [docs/RATIONALE.md](docs/RATIONALE.md).
 Measured results: [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
@@ -47,7 +47,8 @@ Measured results: [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
 Sources: CSV/TSV (delimiter sniffing, header detection, optional `.gz`),
 JSONL/NDJSON/`.json` (nested objects flattened to `a.b.c`, arrays kept as JSON
 text, optional `.gz`), and Elasticsearch/OpenSearch via the scroll API with
-mapping-driven typing, slices and per-slice checkpoints.
+mapping-driven typing and sequential slices. (Crash-safe resume is not in v0.1: see
+[docs/LIMITATIONS.md](docs/LIMITATIONS.md).)
 
 ## Guarantees
 
@@ -103,15 +104,19 @@ atp convert https://es:9200/logs-2026.11.* \
   --query '{"range":{"@timestamp":{"gte":"now-7d"}}}' \
   --api-key "$ATP_ES_API_KEY" \
   --timestamp @timestamp --partition hour \
-  --out ./lake --resume
+  --out ./lake
 ```
 
 - Schema comes from `GET /{index}/_mapping` (mapping wins over sampling:
   `keyword` stays text even if every value looks numeric).
-- Rows come from the scroll API; `--slices N` walks N slices sequentially and
-  checkpoints each one to `<out>/.atp/checkpoint-<index>.json`.
-- `--resume` continues a slice. If Elasticsearch has already expired the scroll
-  context, `atp` says so instead of silently duplicating data.
+- Rows come from the scroll API; `--slices N` splits the index into N slices and
+  walks them sequentially, each with its own (shorter) scroll context.
+- If Elasticsearch expires the scroll context mid-run the conversion fails with
+  the slice number, rather than silently skipping data. For very large indices,
+  narrow the work with `--query` time windows and give each window its own output
+  directory. One run = one output directory: file names are deterministic, so a
+  rerun into the same directory replaces same-named files and rewrites
+  `_manifest.json`.
 - `--page-size` (default 1000) and `--scroll` (default `5m`) are the throughput
   knobs.
 
@@ -122,7 +127,6 @@ lake/
   _manifest.json
   dt=2026-11-21/hour=10/part-00-00000.parquet
   dt=2026-11-21/hour=11/part-00-00001.parquet
-  .atp/checkpoint-logs-2026.json      # only while a resumable run is in flight
 ```
 
 `_manifest.json` records: tool version, status (`complete`/`cancelled`/`failed`),

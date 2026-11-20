@@ -1,7 +1,5 @@
 //! Source abstraction: everything that can emit rows with a schema.
 
-use std::path::PathBuf;
-
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
@@ -66,16 +64,13 @@ pub struct EsConfig {
     pub password: Option<String>,
     pub scroll: String,
     pub page_size: usize,
-    /// Total slices to walk (sequential in v0.1, each slice resumable).
+    /// Total slices to walk sequentially; each gets its own scroll context.
     pub slices: usize,
-    /// Directory holding `checkpoint-*.json`.
-    pub checkpoint_dir: PathBuf,
-    pub resume: bool,
     pub insecure: bool,
 }
 
 impl EsConfig {
-    pub fn new(index: impl Into<String>, checkpoint_dir: PathBuf) -> Self {
+    pub fn new(index: impl Into<String>) -> Self {
         EsConfig {
             index: index.into(),
             query: None,
@@ -85,8 +80,6 @@ impl EsConfig {
             scroll: "5m".to_string(),
             page_size: 1000,
             slices: 1,
-            checkpoint_dir,
-            resume: false,
             insecure: false,
         }
     }
