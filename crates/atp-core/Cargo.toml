@@ -1,0 +1,33 @@
+[package]
+name = "atp-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Conversion engine for anything-to-parquet: sources, schema evolution, Parquet sink"
+
+[dependencies]
+arrow_array = { workspace = true }
+arrow_schema = { workspace = true }
+arrow-select = "60"
+parquet = { workspace = true }
+tokio = { workspace = true }
+reqwest = { workspace = true }
+async-trait = { workspace = true }
+csv = { workspace = true }
+flate2 = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+chrono = { workspace = true }
+xxhash-rust = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "net", "io-util"] }
+tempfile = { workspace = true }
+walkdir = { workspace = true }
+
+[lints]
+workspace = true

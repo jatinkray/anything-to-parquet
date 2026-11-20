@@ -1,0 +1,28 @@
+[package]
+name = "anything-to-parquet"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Convert Elasticsearch indices, CSV dumps and JSONL files into partitioned Parquet"
+default-run = "atp"
+
+[[bin]]
+name = "atp"
+path = "src/main.rs"
+
+[dependencies]
+atp-core = { workspace = true }
+tokio = { workspace = true }
+clap = { workspace = true }
+serde_json = { workspace = true }
+ratatui = { workspace = true }
+crossterm = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+tempfile = { workspace = true }
