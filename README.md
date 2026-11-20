@@ -70,8 +70,9 @@ cargo install --path crates/atp        # or: cargo build --release
 ./target/release/atp --help
 ```
 
-Linux, macOS and Windows. The release profile is a single static binary with no
-runtime dependencies (musl build in CI).
+Linux is what CI builds and tests (including a static x86_64-musl binary); macOS
+and Windows build from source with the same toolchain and are not exercised in
+CI yet. No runtime dependencies.
 
 ## A five minute tour
 
