@@ -1,0 +1,54 @@
+[workspace]
+resolver = "2"
+members = ["crates/atp-core", "crates/atp"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.89"
+license = "Apache-2.0"
+repository = "https://github.com/jatinkray/anything-to-parquet"
+description = "Turn Elasticsearch indices, CSV dumps and JSONL files into partitioned Parquet"
+
+[workspace.dependencies]
+atp-core = { path = "crates/atp-core", version = "0.1.0" }
+
+arrow_array = { package = "arrow-array", version = "60" }
+arrow_schema = { package = "arrow-schema", version = "60" }
+parquet = { version = "60", features = ["arrow", "zstd"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "signal", "io-util", "net"] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "http2", "charset"] }
+async-trait = "0.1"
+futures = "0.3"
+csv = "1"
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+anyhow = "1"
+clap = { version = "4", features = ["derive", "env"] }
+ratatui = "0.30"
+crossterm = "0.29"
+chrono = { version = "0.4", features = ["serde"] }
+xxhash-rust = { version = "0.8", features = ["xxh3"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+walkdir = "2"
+tempfile = "3"
+num-format = "0.4"
+unicode-width = "0.2"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "warn"
+
+[profile.release]
+lto = "thin"
+codegen-units = 4
+strip = "symbols"
+panic = "abort"
