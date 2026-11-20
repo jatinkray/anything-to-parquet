@@ -109,17 +109,27 @@ fn open_maybe_gzip(path: &Path) -> Result<Box<dyn Read + Send>> {
 
 /// Pick the delimiter with the most occurrences in the first non-empty line,
 /// ignoring quoted runs. Candidates: `, ; \t |`.
+///
+/// The sniff reads through the same decompression path as the converter, so a
+/// gzipped semicolon-separated export is detected correctly (reading the raw
+/// bytes of a `.gz` would see binary and fall back to `,`).
 fn sniff_delimiter(path: &Path) -> Result<u8> {
-    let mut f = File::open(path).map_err(|e| read_error(path, e))?;
+    let mut reader = open_maybe_gzip(path)?;
     let mut buf = vec![0u8; 64 * 1024];
-    let n = f.read(&mut buf).map_err(|e| read_error(path, e))?;
-    buf.truncate(n);
-    if path
-        .extension()
-        .is_some_and(|e| e.eq_ignore_ascii_case("gz"))
-    {
-        return Ok(b',');
+    let mut filled = 0usize;
+    while filled < buf.len() {
+        let n = reader
+            .read(&mut buf[filled..])
+            .map_err(|e| read_error(path, e))?;
+        if n == 0 {
+            break;
+        }
+        filled += n;
+        if buf[..filled].contains(&b'\n') {
+            break;
+        }
     }
+    buf.truncate(filled);
     let line = buf.split(|b| *b == b'\n').next().unwrap_or(&[]);
     let mut best = (0usize, b',');
     for d in DELIMITERS {
@@ -307,6 +317,20 @@ mod tests {
         let page = src.next_page(10).await.expect("page").expect("some");
         assert_eq!(page.rows.len(), 2);
         assert_eq!(page.rows[0][0], Value::Str("0123".into()));
+    }
+
+    #[test]
+    fn sniffs_semicolon_inside_a_gzip_file() {
+        use flate2::write::GzEncoder;
+        use std::io::Write as _;
+        let dir = std::env::temp_dir().join(format!("atp-csvgz-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("tmp dir");
+        let path = dir.join("semi.csv.gz");
+        let file = File::create(&path).expect("create");
+        let mut enc = GzEncoder::new(file, flate2::Compression::default());
+        enc.write_all(b"a;b;c\n1;2;3\n4;5;6\n").expect("write");
+        enc.finish().expect("finish");
+        assert_eq!(sniff_delimiter(&path).expect("sniff"), b';');
     }
 
     #[test]
