@@ -138,6 +138,15 @@ source description, options, every schema written, every file with rows, bytes,
 xxh3 digest and schema hash, and the totals. If a run fails or is cancelled the
 completed files are still listed, so partial work remains verifiable.
 
+## Related
+
+Prometheus/Thanos **TSDB blocks** are handled by the sibling project
+[`tsdb2parqtel`](https://github.com/jatinkray/tsdb-parquet-convert): TSDB index
+v1/v2, XOR/histogram chunks, tombstones, per-series verification. This repository
+covers what TSDB readers cannot: Elasticsearch/OpenSearch indices, CSV dumps and
+JSONL exports. Folding TSDB blocks into this binary is on the roadmap once the
+source trait has a second non-HTTP implementation to generalise against.
+
 ## Non-goals (v0.1)
 
 No streaming ingestion (use Vector), no query engine (use DuckDB/Athena), no
