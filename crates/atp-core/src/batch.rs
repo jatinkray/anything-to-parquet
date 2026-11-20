@@ -238,44 +238,43 @@ impl BatchBuilder {
                 self.schema.fields.len()
             )));
         }
+        self.scratch.clear();
+        self.scratch.reserve(self.schema.fields.len());
         for (i, (field, value)) in self.schema.fields.iter().zip(values).enumerate() {
-            if coerce(value.clone(), field.ty).is_none() {
-                let to = merge_ty(field.ty, value.ty());
-                if to == field.ty {
-                    return Err(Error::SchemaConflict {
-                        column: field.name.clone(),
-                        record: self.record,
-                        detail: format!(
-                            "value {:?} does not fit type {}",
-                            value.display(),
-                            field.ty
-                        ),
-                    });
+            match coerce(value.clone(), field.ty) {
+                Some(v) => self.scratch.push(v),
+                None => {
+                    let to = merge_ty(field.ty, value.ty());
+                    if to == field.ty {
+                        return Err(Error::SchemaConflict {
+                            column: field.name.clone(),
+                            record: self.record,
+                            detail: format!(
+                                "value {:?} does not fit type {}",
+                                value.display(),
+                                field.ty
+                            ),
+                        });
+                    }
+                    if strict {
+                        return Err(Error::SchemaConflict {
+                            column: field.name.clone(),
+                            record: self.record,
+                            detail: format!(
+                                "value {:?} would widen {} -> {} (strict mode)",
+                                value.display(),
+                                field.ty,
+                                to
+                            ),
+                        });
+                    }
+                    self.scratch.clear();
+                    return Ok(PushOutcome::Promote { field: i, to });
                 }
-                if strict {
-                    return Err(Error::SchemaConflict {
-                        column: field.name.clone(),
-                        record: self.record,
-                        detail: format!(
-                            "value {:?} would widen {} -> {} (strict mode)",
-                            value.display(),
-                            field.ty,
-                            to
-                        ),
-                    });
-                }
-                return Ok(PushOutcome::Promote { field: i, to });
             }
         }
-        for (col, (field, value)) in self
-            .cols
-            .iter_mut()
-            .zip(self.schema.fields.iter().zip(values))
-        {
-            match coerce(value.clone(), field.ty) {
-                Some(v) => col.push(v),
-                None => col.push(Value::Null),
-            }
+        for (col, v) in self.cols.iter_mut().zip(self.scratch.drain(..)) {
+            col.push(v);
         }
         self.rows += 1;
         Ok(PushOutcome::Accepted)
