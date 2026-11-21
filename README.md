@@ -10,7 +10,7 @@
 [![Tests](https://img.shields.io/badge/tests-84%20passing-brightgreen.svg)](#development)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.89%2B-orange.svg)](https://www.rust-lang.org)
-[![Platforms](https://img.shields.io/badge/platforms-linux%20%C2%B7%20macos%20%C2%B7%20windows-lightgrey.svg)](#install)
+[![Platforms](https://img.shields.io/badge/platforms-linux%20(ci)%20%C2%B7%20build%20from%20source-lightgrey.svg)](#install)
 
 </div>
 
@@ -73,8 +73,9 @@ cargo install --path crates/atp        # or: cargo build --release
 ./target/release/atp --help
 ```
 
-Prebuilt static binaries are produced by CI for Linux x86_64 (musl); macOS and
-Windows build from source with the same toolchain. No runtime dependencies.
+CI builds and tests a static Linux x86_64 (musl) binary; release archives are
+not published yet. macOS and Windows build from source with the same toolchain
+and are not yet exercised in CI. No runtime dependencies.
 
 ### 1. Look before you leap
 
