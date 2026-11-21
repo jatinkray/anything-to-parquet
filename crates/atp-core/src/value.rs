@@ -7,6 +7,7 @@
 //! about type changes and one place to test them.
 
 use std::fmt;
+use std::sync::Arc;
 
 use arrow_schema::{DataType, Field as ArrowField, Schema as ArrowSchema, TimeUnit};
 use serde::{Deserialize, Serialize};
@@ -74,7 +75,7 @@ pub enum Value {
     Bool(bool),
     I64(i64),
     F64(f64),
-    Str(String),
+    Str(Arc<str>),
     Timestamp(i64),
 }
 
@@ -99,7 +100,7 @@ impl Value {
             Value::F64(f) => serde_json::Number::from_f64(*f)
                 .map(serde_json::Value::Number)
                 .unwrap_or(serde_json::Value::Null),
-            Value::Str(s) => serde_json::Value::String(s.clone()),
+            Value::Str(s) => serde_json::Value::String(s.to_string()),
             Value::Timestamp(ms) => serde_json::Value::String(render_timestamp(*ms)),
         }
     }
@@ -111,7 +112,7 @@ impl Value {
             Value::Bool(b) => b.to_string(),
             Value::I64(i) => i.to_string(),
             Value::F64(f) => f.to_string(),
-            Value::Str(s) => s.clone(),
+            Value::Str(s) => s.to_string(),
             Value::Timestamp(ms) => render_timestamp(*ms),
         }
     }
@@ -121,7 +122,7 @@ impl Value {
     pub fn into_string(self) -> String {
         match self {
             Value::Null => String::new(),
-            Value::Str(s) => s,
+            Value::Str(s) => s.to_string(),
             other => other.display(),
         }
     }
@@ -248,7 +249,7 @@ pub fn coerce(value: Value, ty: Ty) -> Option<Value> {
         return Some(value);
     }
     Some(match (value, ty) {
-        (v, Ty::Str) => Str(v.into_string()),
+        (v, Ty::Str) => Str(Arc::from(v.into_string())),
         (Str(s), Ty::I64) => I64(s.trim().parse::<i64>().ok()?),
         (Str(s), Ty::F64) => F64(s.trim().parse::<f64>().ok()?),
         (Str(s), Ty::Bool) => match s.trim() {

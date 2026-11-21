@@ -1,17 +1,18 @@
 [workspace]
 resolver = "2"
-members = ["crates/atp-core", "crates/atp"]
+members = ["crates/atp-core", "crates/atp-tsdb", "crates/atp"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 rust-version = "1.89"
 license = "Apache-2.0"
 repository = "https://github.com/jatinkray/anything-to-parquet"
-description = "Turn Elasticsearch indices, CSV dumps and JSONL files into partitioned Parquet"
+description = "Turn CSV, JSONL, Elasticsearch and Prometheus TSDB data into partitioned, verifiable Parquet"
 
 [workspace.dependencies]
-atp-core = { path = "crates/atp-core", version = "0.1.0" }
+atp-core = { path = "crates/atp-core", version = "0.2.0" }
+atp-tsdb = { path = "crates/atp-tsdb", version = "0.2.0" }
 
 arrow_array = { package = "arrow-array", version = "60" }
 arrow_schema = { package = "arrow-schema", version = "60" }
@@ -22,6 +23,10 @@ async-trait = "0.1"
 futures = "0.3"
 csv = "1"
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+crc32c = "0.6"
+regex = "1"
+object_store = { version = "0.14", features = ["aws", "gcp", "azure"] }
+tsdb-reader-upstream = { package = "tsdb-reader", version = "0.1.0", default-features = false }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"

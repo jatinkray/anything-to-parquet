@@ -85,6 +85,7 @@ on 2026-11-21; "last push" is the field `pushed_at`.
 | `rayyildiz/cc2p` | 7 | 2026-11-04 | Rust CSV→Parquet with a TUI | CSV only, folder-level, no manifest/verify/partitions |
 | `bisoftbilgi/elastic-to-parquet` | 1 | 2023-09-08 | Python ES→Parquet script | The only dedicated ES→Parquet tool found; unmaintained, GPL-3.0, no releases |
 | `YelpArchive/aws_logs_to_parquet_converter` | 11 | 2023-03-24 | Spark batch job | Requires a Spark cluster |
+| `jatinkray/tsdb-parquet-convert` (`tsdb2parqtel`) | — | 2026-11-21 | Prometheus/Thanos → Parquet/Parqtel | Excellent for metrics, single-purpose; **merged into this tool** as the `tsdb` source |
 
 Search method: `gh search repos` over `parquet converter`, `elasticsearch
 parquet`, `parquet export logs`, `ndjson parquet`, `sqlite parquet export`,
@@ -96,9 +97,10 @@ Parquet, so a conversion TUI is not a crowded space.
 
 There are many ways to *read* Parquet and several single-format *converters*, but
 no maintained tool that takes an operational source (ES index, CSV dump, JSONL
-export), streams it with bounded memory, writes lake-shaped Parquet
-(partitions + zstd + row-group limits), bounds memory on inputs it cannot fit,
-and emits a manifest that lets you prove afterwards what you got.
+export, Prometheus block), streams it with bounded memory, writes lake-shaped
+Parquet (partitions + zstd + row-group limits), and emits a manifest that lets you
+prove afterwards what you got. The metrics half of that sentence already existed
+in `tsdb2parqtel`; it is now a source in this tool rather than a separate binary.
 
 ## 3. Economics, honestly
 

@@ -1,0 +1,33 @@
+[package]
+name = "atp-tsdb"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Prometheus/Thanos TSDB block source for anything-to-parquet"
+
+[dependencies]
+atp-core = { workspace = true }
+async-trait = { workspace = true }
+crc32c = { workspace = true }
+futures = { workspace = true }
+object_store = { workspace = true }
+regex = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tempfile = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+walkdir = { workspace = true }
+tsdb-reader-upstream = { workspace = true }
+xxhash-rust = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"
+serde_json = { workspace = true }
+tempfile = { workspace = true }
+
+[lints]
+workspace = true

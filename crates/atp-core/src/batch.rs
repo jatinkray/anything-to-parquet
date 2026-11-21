@@ -33,7 +33,7 @@ enum ColBuf {
     I64 { values: Vec<i64>, nulls: Vec<bool> },
     F64 { values: Vec<f64>, nulls: Vec<bool> },
     Ts { values: Vec<i64>, nulls: Vec<bool> },
-    Str { values: Vec<Option<String>> },
+    Str { values: Vec<Option<Arc<str>>> },
 }
 
 impl ColBuf {
@@ -94,7 +94,8 @@ impl ColBuf {
                 nulls.push(false);
             }
             (ColBuf::Str { values }, Value::Null) => values.push(None),
-            (ColBuf::Str { values }, other) => values.push(Some(other.into_string())),
+            (ColBuf::Str { values }, Value::Str(s)) => values.push(Some(s)),
+            (ColBuf::Str { values }, other) => values.push(Some(Arc::from(other.into_string()))),
             // Unreachable by construction: `BatchBuilder::push` coerces first.
             _ => values_push_mismatch(),
         }
@@ -160,7 +161,7 @@ impl ColBuf {
                 let mut b = StringBuilder::with_capacity(rows, rows * 16);
                 for v in values.iter() {
                     match v {
-                        Some(s) => b.append_value(s),
+                        Some(s) => b.append_value(s.as_ref()),
                         None => b.append_null(),
                     }
                 }

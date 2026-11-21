@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 300" role="img" aria-label="anything-to-parquet: one static binary from operational data to lake-ready Parquet">
+  <defs>
+    <linearGradient id="hero-grad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#38bdf8"/>
+      <stop offset="1" stop-color="#6366f1"/>
+    </linearGradient>
+    <linearGradient id="hero-panel" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0f172a"/>
+      <stop offset="1" stop-color="#0b1020"/>
+    </linearGradient>
+    <linearGradient id="hero-glow" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#38bdf8" stop-opacity="0.20"/>
+      <stop offset="1" stop-color="#6366f1" stop-opacity="0.02"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1200" height="300" rx="24" fill="url(#hero-panel)"/>
+  <rect x="1" y="1" width="1198" height="298" rx="23.5" fill="url(#hero-glow)" stroke="#38bdf8" stroke-opacity="0.22" stroke-width="2"/>
+
+  <g transform="translate(64, 70) scale(1.25)">
+    <rect x="4" y="4" width="120" height="120" rx="30" fill="#0b1020"/>
+    <rect x="4.75" y="4.75" width="118.5" height="118.5" rx="29.25" fill="#38bdf8" fill-opacity="0.10" stroke="#38bdf8" stroke-opacity="0.35" stroke-width="1.5"/>
+    <g fill="#7dd3fc">
+      <circle cx="30" cy="40" r="4.2"/><circle cx="45" cy="40" r="4.2"/><circle cx="60" cy="40" r="4.2"/>
+      <circle cx="30" cy="64" r="4.2"/><circle cx="45" cy="64" r="4.2"/><circle cx="60" cy="64" r="4.2"/>
+      <circle cx="30" cy="88" r="4.2"/><circle cx="45" cy="88" r="4.2"/><circle cx="60" cy="88" r="4.2"/>
+    </g>
+    <path d="M70 40 L87 64 L70 88" fill="none" stroke="url(#hero-grad)" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>
+    <rect x="94" y="32" width="11" height="64" rx="5.5" fill="url(#hero-grad)"/>
+    <rect x="109" y="32" width="11" height="64" rx="5.5" fill="url(#hero-grad)" opacity="0.62"/>
+  </g>
+
+  <text x="250" y="126" font-family="'Segoe UI', system-ui, -apple-system, sans-serif" font-size="62" font-weight="700" fill="#e6edf3">anything<tspan fill="#58a6ff"> → </tspan>parquet</text>
+  <text x="252" y="172" font-family="'Segoe UI', system-ui, -apple-system, sans-serif" font-size="24" fill="#9fb0c9">One static binary. Any operational data. Lake-ready Parquet.</text>
+
+  <g font-family="'Segoe UI', system-ui, -apple-system, sans-serif" font-size="19" fill="#c9d7ea">
+    <rect x="252" y="198" width="104" height="40" rx="20" fill="#38bdf8" fill-opacity="0.12" stroke="#38bdf8" stroke-opacity="0.35"/>
+    <text x="278" y="224">CSV</text>
+    <rect x="368" y="198" width="112" height="40" rx="20" fill="#38bdf8" fill-opacity="0.12" stroke="#38bdf8" stroke-opacity="0.35"/>
+    <text x="392" y="224">JSONL</text>
+    <rect x="492" y="198" width="196" height="40" rx="20" fill="#38bdf8" fill-opacity="0.12" stroke="#38bdf8" stroke-opacity="0.35"/>
+    <text x="516" y="224">Elasticsearch</text>
+    <rect x="700" y="198" width="248" height="40" rx="20" fill="#38bdf8" fill-opacity="0.12" stroke="#38bdf8" stroke-opacity="0.35"/>
+    <text x="724" y="224">Prometheus TSDB</text>
+  </g>
+
+  <text x="1136" y="264" text-anchor="end" font-family="'Segoe UI', system-ui, -apple-system, sans-serif" font-size="18" fill="#6b7c93">atp · zstd · Hive partitions · manifest + verify</text>
+</svg>

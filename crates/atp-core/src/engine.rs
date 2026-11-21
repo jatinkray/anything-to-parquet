@@ -18,7 +18,7 @@ use crate::batch::{BatchBuilder, PushOutcome};
 use crate::error::{Error, Result};
 use crate::manifest::{Manifest, ManifestOptions, MANIFEST_NAME};
 use crate::sink::{partition_label, ParquetSink, Partition, SinkOptions};
-use crate::source::{self, SourceConfig, SourceInfo};
+use crate::source::{Source, SourceInfo};
 use crate::value::{Schema, Ty, Value};
 
 #[derive(Clone, Debug)]
@@ -79,15 +79,18 @@ pub struct Summary {
     pub source: SourceInfo,
 }
 
+/// Converts a source into Parquet. The caller constructs the source (the CLI
+/// picks CSV/JSONL/Elasticsearch/TSDB), so the engine never needs to know which
+/// format it is reading.
 pub async fn run(
-    config: SourceConfig,
+    mut source: Box<dyn Source>,
     opts: RunOptions,
     events: Option<tokio::sync::mpsc::Sender<Event>>,
     cancel: Arc<AtomicBool>,
 ) -> Result<Summary> {
     let started = Instant::now();
     let started_at = chrono::Utc::now().to_rfc3339();
-    let mut source = source::open(&config)?;
+    let timestamp_column = source.timestamp_column();
     let info = source.describe();
     emit(&events, Event::Opened { info: info.clone() });
     let mut schema = source.infer().await?;
@@ -139,7 +142,12 @@ pub async fn run(
                 }
             }
             if !added.is_empty() {
-                if let Err(e) = flush(&mut builder, &mut sink, opts.partition, &config) {
+                if let Err(e) = flush(
+                    &mut builder,
+                    &mut sink,
+                    opts.partition,
+                    timestamp_column.as_deref(),
+                ) {
                     status = "failed";
                     failure = Some(e);
                     break 'outer;
@@ -168,7 +176,12 @@ pub async fn run(
                 match builder.push(&translate_buf, opts.strict) {
                     Ok(PushOutcome::Accepted) => break,
                     Ok(PushOutcome::Promote { field, to }) => {
-                        if let Err(e) = flush(&mut builder, &mut sink, opts.partition, &config) {
+                        if let Err(e) = flush(
+                            &mut builder,
+                            &mut sink,
+                            opts.partition,
+                            timestamp_column.as_deref(),
+                        ) {
                             status = "failed";
                             failure = Some(e);
                             break 'outer;
@@ -202,7 +215,12 @@ pub async fn run(
                 }
             }
             if builder.is_full() {
-                if let Err(e) = flush(&mut builder, &mut sink, opts.partition, &config) {
+                if let Err(e) = flush(
+                    &mut builder,
+                    &mut sink,
+                    opts.partition,
+                    timestamp_column.as_deref(),
+                ) {
                     status = "failed";
                     failure = Some(e);
                     break 'outer;
@@ -226,7 +244,12 @@ pub async fn run(
     }
 
     if failure.is_none() {
-        if let Err(e) = flush(&mut builder, &mut sink, opts.partition, &config) {
+        if let Err(e) = flush(
+            &mut builder,
+            &mut sink,
+            opts.partition,
+            timestamp_column.as_deref(),
+        ) {
             status = "failed";
             failure = Some(e);
         }
@@ -258,7 +281,7 @@ pub async fn run(
             partition: opts.partition,
             row_group_rows: opts.sink.row_group_rows,
             strict: opts.strict,
-            timestamp_column: config.timestamp_column.clone(),
+            timestamp_column: timestamp_column.clone(),
         },
         schemas: sink_result.schemas,
         files: sink_result.files.clone(),
@@ -336,12 +359,12 @@ fn flush(
     builder: &mut BatchBuilder,
     sink: &mut ParquetSink,
     partition: Partition,
-    config: &SourceConfig,
+    timestamp_column: Option<&str>,
 ) -> Result<()> {
     let Some(batch) = builder.finish() else {
         return Ok(());
     };
-    let labels = partition_labels(&batch, partition, config.timestamp_column.as_deref())?;
+    let labels = partition_labels(&batch, partition, timestamp_column)?;
     sink.write(&batch, labels.as_deref())?;
     Ok(())
 }
@@ -395,8 +418,7 @@ pub struct Preview {
     pub rows: Vec<Vec<String>>,
 }
 
-pub async fn preview(config: SourceConfig, limit: usize) -> Result<Preview> {
-    let mut source = source::open(&config)?;
+pub async fn preview(mut source: Box<dyn Source>, limit: usize) -> Result<Preview> {
     let info = source.describe();
     let schema = source.infer().await?;
     let columns = schema.names();

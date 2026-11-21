@@ -8,6 +8,7 @@ use std::collections::VecDeque;
 use std::fs::File;
 use std::io::{BufReader, Read};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use async_trait::async_trait;
 
@@ -182,7 +183,7 @@ fn parse_cell(cell: &str, column: &str, timestamp: Option<&str>) -> Result<Value
             }
         }
     }
-    Ok(Value::Str(cell.to_string()))
+    Ok(Value::Str(Arc::from(cell)))
 }
 
 fn value_ty(v: &Value) -> Ty {
@@ -199,7 +200,7 @@ impl Source for CsvSource {
             rows_estimate: None,
             bytes_estimate: bytes,
             notes: vec![format!(
-                "delimiter {:?}, {} columns, sampled {} rows for types",
+                "delimiter {:?}, {} columns, types from up to {} rows",
                 self.delimiter as char,
                 self.header.len(),
                 self.sample_rows

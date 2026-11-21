@@ -98,17 +98,15 @@ async fn event_loop(terminal: &mut ratatui::DefaultTerminal, app: &mut App) -> R
             },
             Action::Inspect => {
                 let args = source_args(app);
-                match crate::cli::config_from(&args) {
-                    Ok(cfg) => {
-                        let tx = tx.clone();
-                        app.status = "reading schema and sample rows…".to_string();
-                        tokio::spawn(async move {
-                            let result = engine::preview(cfg, 50).await;
-                            let _ = tx.send(Msg::Preview(result));
-                        });
-                    }
-                    Err(err) => app.fail(err.to_string()),
-                }
+                let tx = tx.clone();
+                app.status = "reading schema and sample rows…".to_string();
+                tokio::spawn(async move {
+                    let result = match build_source_blocking(args).await {
+                        Ok(source) => engine::preview(source, 50).await,
+                        Err(err) => Err(err),
+                    };
+                    let _ = tx.send(Msg::Preview(result));
+                });
             }
             Action::Run => {
                 let Some(job) = app.job() else {
@@ -117,17 +115,8 @@ async fn event_loop(terminal: &mut ratatui::DefaultTerminal, app: &mut App) -> R
                 };
                 let out = job.out.clone();
                 let args = source_args(app);
-                match crate::cli::config_from(&args) {
-                    Ok(mut cfg) => {
-                        if let Some(ts) = job.timestamp_column.clone() {
-                            cfg.timestamp_column = Some(ts);
-                        }
-                        if cfg.timestamp_column.is_none()
-                            && !matches!(job.partition, atp_core::sink::Partition::None)
-                        {
-                            app.fail("time partitioning needs a timestamp column");
-                            continue;
-                        }
+                {
+                    {
                         let opts = RunOptions {
                             out: out.clone(),
                             partition: job.partition,
@@ -145,7 +134,21 @@ async fn event_loop(terminal: &mut ratatui::DefaultTerminal, app: &mut App) -> R
                         let (event_tx, mut event_rx) = tokio::sync::mpsc::channel(64);
                         let ui_tx = tx.clone();
                         tokio::spawn(async move {
-                            let result = engine::run(cfg, opts, Some(event_tx), flag).await;
+                            let result = match build_source_blocking(args).await {
+                                Ok(source)
+                                    if source.timestamp_column().is_none()
+                                        && !matches!(
+                                            opts.partition,
+                                            atp_core::sink::Partition::None
+                                        ) =>
+                                {
+                                    Err(atp_core::Error::msg(
+                                        "time partitioning needs a timestamp column",
+                                    ))
+                                }
+                                Ok(source) => engine::run(source, opts, Some(event_tx), flag).await,
+                                Err(err) => Err(err),
+                            };
                             let _ = ui_tx.send(Msg::Done(result));
                         });
                         let forward = tx.clone();
@@ -155,12 +158,19 @@ async fn event_loop(terminal: &mut ratatui::DefaultTerminal, app: &mut App) -> R
                             }
                         });
                     }
-                    Err(err) => app.fail(err.to_string()),
                 }
             }
             Action::None => {}
         }
     }
+}
+
+/// Building a source can parse an index or stage a remote prefix; keep it off
+/// the render thread so the TUI never freezes on I/O.
+async fn build_source_blocking(args: SourceArgs) -> Result<Box<dyn atp_core::source::Source>> {
+    tokio::task::spawn_blocking(move || crate::cli::build_source(&args))
+        .await
+        .map_err(|e| Error::msg(format!("source task failed: {e}")))?
 }
 
 fn source_args(app: &App) -> SourceArgs {
@@ -177,6 +187,7 @@ fn source_args(app: &App) -> SourceArgs {
         delimiter: None,
         sample_rows: 10_000,
         es: EsArgs::default(),
+        tsdb: crate::cli::TsdbArgs::default(),
     }
 }
 
@@ -279,6 +290,24 @@ fn draw_source(frame: &mut Frame, area: Rect, app: &App) {
 fn source_kind_hint(input: &str) -> Option<&'static str> {
     if input.starts_with("http://") || input.starts_with("https://") {
         return Some("elasticsearch");
+    }
+    if ["s3://", "gs://", "az://"]
+        .iter()
+        .any(|scheme| input.starts_with(scheme))
+    {
+        return Some("tsdb");
+    }
+    let path = std::path::Path::new(input);
+    if path.is_dir()
+        && (path.join("meta.json").is_file()
+            || std::fs::read_dir(path).is_ok_and(|entries| {
+                entries.flatten().any(|entry| {
+                    let child = entry.path();
+                    child.is_dir() && child.join("meta.json").is_file()
+                })
+            }))
+    {
+        return Some("tsdb");
     }
     let lower = input.to_ascii_lowercase();
     if lower.ends_with(".csv") || lower.ends_with(".tsv") || lower.ends_with(".csv.gz") {

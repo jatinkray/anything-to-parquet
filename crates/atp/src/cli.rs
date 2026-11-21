@@ -58,6 +58,59 @@ pub struct SourceArgs {
     pub sample_rows: usize,
     #[command(flatten)]
     pub es: EsArgs,
+    #[command(flatten)]
+    pub tsdb: TsdbArgs,
+}
+
+#[derive(Args, Clone)]
+pub struct TsdbArgs {
+    /// Row shape: `series` (compact), `wide` (one column per label) or `long` (labels as JSON)
+    #[arg(long, default_value = "series", value_name = "series|wide|long")]
+    pub tsdb_shape: String,
+    /// Start of the sample window: RFC 3339 or Unix seconds
+    #[arg(long, value_name = "TIME")]
+    pub tsdb_from: Option<String>,
+    /// End of the sample window (exclusive): RFC 3339 or Unix seconds
+    #[arg(long, value_name = "TIME")]
+    pub tsdb_to: Option<String>,
+    /// Only these block ULIDs (repeatable)
+    #[arg(long = "tsdb-block", value_name = "ULID")]
+    pub tsdb_block: Vec<String>,
+    /// Series selector, e.g. `job="api"` or `{job="api",env!="dev"}` (repeatable)
+    #[arg(long = "tsdb-match", value_name = "SELECTOR")]
+    pub tsdb_match: Vec<String>,
+    /// Stale markers: `drop` (default) or `keep`
+    #[arg(long, default_value = "drop", value_name = "drop|keep")]
+    pub tsdb_stale: String,
+    /// Unreadable series/blocks: `fail` (default) or `skip`
+    #[arg(long, default_value = "fail", value_name = "fail|skip")]
+    pub tsdb_on_error: String,
+    /// Thanos external labels: `include` (default) or `ignore`
+    #[arg(long, default_value = "include", value_name = "include|ignore")]
+    pub tsdb_external_labels: String,
+    /// Downsampled blocks: skip, prefer-raw (default), include, only
+    #[arg(long, default_value = "prefer-raw")]
+    pub tsdb_downsample: String,
+    /// Comma-separated label names that identify replicas to deduplicate
+    #[arg(long, value_name = "LABELS")]
+    pub tsdb_dedup_replica_labels: Option<String>,
+}
+
+impl Default for TsdbArgs {
+    fn default() -> Self {
+        TsdbArgs {
+            tsdb_shape: "series".to_string(),
+            tsdb_from: None,
+            tsdb_to: None,
+            tsdb_block: Vec::new(),
+            tsdb_match: Vec::new(),
+            tsdb_stale: "drop".to_string(),
+            tsdb_on_error: "fail".to_string(),
+            tsdb_external_labels: "include".to_string(),
+            tsdb_downsample: "prefer-raw".to_string(),
+            tsdb_dedup_replica_labels: None,
+        }
+    }
 }
 
 #[derive(Args, Clone, Default)]
@@ -188,7 +241,7 @@ pub fn config_from(source_args: &SourceArgs) -> Result<SourceConfig> {
             } else {
                 source::detect_kind(&location).ok_or_else(|| {
                     Error::msg(format!(
-                        "cannot tell the format of `{raw}`; pass --format csv|jsonl|es"
+                        "cannot tell the format of `{raw}`; pass --format csv|jsonl|es|tsdb"
                     ))
                 })?
             }
@@ -248,9 +301,69 @@ fn split_url(raw: &str) -> (String, Option<String>) {
     }
 }
 
+/// Construct the source the arguments describe. Keeping this in one place means
+/// the CLI and the TUI open exactly the same readers.
+pub fn build_source(source_args: &SourceArgs) -> Result<Box<dyn atp_core::source::Source>> {
+    let cfg = config_from(source_args)?;
+    match cfg.kind {
+        SourceKind::Tsdb => Ok(Box::new(atp_tsdb::TsdbSource::open(tsdb_options(
+            source_args,
+            &cfg.location,
+        )?)?)),
+        _ => atp_core::source::open(&cfg),
+    }
+}
+
+fn tsdb_options(source_args: &SourceArgs, path: &str) -> Result<atp_tsdb::TsdbOptions> {
+    use atp_tsdb::{DownsamplePolicy, ExternalLabels, OnError, TsdbOptions, TsdbShape};
+    let tsdb = &source_args.tsdb;
+    let shape = TsdbShape::parse(&tsdb.tsdb_shape)
+        .ok_or_else(|| Error::msg(format!("unknown --tsdb-shape `{}`", tsdb.tsdb_shape)))?;
+    let mut options = TsdbOptions::new(path);
+    options.shape = shape;
+    options.from_ms = tsdb.tsdb_from.as_deref().map(parse_time_arg).transpose()?;
+    options.to_ms = tsdb.tsdb_to.as_deref().map(parse_time_arg).transpose()?;
+    options.blocks = tsdb.tsdb_block.clone();
+    options.matchers = tsdb.tsdb_match.clone();
+    options.stale = atp_tsdb::StaleMarkerPolicy::parse(&tsdb.tsdb_stale)
+        .map_err(|e| Error::msg(e.to_string()))?;
+    options.on_error =
+        OnError::parse(&tsdb.tsdb_on_error).map_err(|e| Error::msg(e.to_string()))?;
+    options.external_labels =
+        ExternalLabels::parse(&tsdb.tsdb_external_labels).map_err(|e| Error::msg(e.to_string()))?;
+    options.downsampled =
+        DownsamplePolicy::parse(&tsdb.tsdb_downsample).map_err(|e| Error::msg(e.to_string()))?;
+    options.dedup_replica_labels = tsdb
+        .tsdb_dedup_replica_labels
+        .as_deref()
+        .map(|list| {
+            list.split(',')
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default();
+    Ok(options)
+}
+
+/// Accepts RFC 3339 or Unix seconds (10 digits); rejects anything else loudly.
+fn parse_time_arg(raw: &str) -> Result<i64> {
+    let trimmed = raw.trim();
+    if let Some(ms) = atp_core::value::parse_timestamp(trimmed) {
+        return Ok(ms);
+    }
+    if let Ok(seconds) = trimmed.parse::<i64>() {
+        return Ok(seconds.saturating_mul(1000));
+    }
+    Err(Error::msg(format!(
+        "cannot read `{raw}` as a time; use RFC 3339 or Unix seconds"
+    )))
+}
+
 async fn inspect(args: InspectArgs) -> Result<()> {
-    let cfg = config_from(&args.source)?;
-    let preview = engine::preview(cfg, args.limit).await?;
+    let source = build_source(&args.source)?;
+    let preview = engine::preview(source, args.limit).await?;
     if args.json {
         let payload = serde_json::json!({
             "source": preview.info,
@@ -290,8 +403,8 @@ async fn convert(args: ConvertArgs) -> Result<()> {
         .ok_or_else(|| Error::msg(format!("unknown --partition `{}`", args.partition)))?;
     let compression = Compression::parse(&args.compression)
         .ok_or_else(|| Error::msg(format!("unknown --compression `{}`", args.compression)))?;
-    let cfg = config_from(&args.source)?;
-    if !matches!(partition, Partition::None) && cfg.timestamp_column.is_none() {
+    let source = build_source(&args.source)?;
+    if !matches!(partition, Partition::None) && source.timestamp_column().is_none() {
         return Err(Error::msg(
             "time partitioning needs --timestamp <column>; pass --partition none to skip",
         ));
@@ -355,7 +468,7 @@ async fn convert(args: ConvertArgs) -> Result<()> {
             }
         }
     });
-    let result = engine::run(cfg, opts, Some(tx), cancel).await;
+    let result = engine::run(source, opts, Some(tx), cancel).await;
     let _ = printer.await;
     let summary = result?;
     if args.json {
@@ -413,6 +526,7 @@ fn sources() {
     println!("csv     delimited text: .csv .tsv, optional .gz, delimiter sniffed");
     println!("jsonl   one JSON object per line: .jsonl .ndjson .json, optional .gz");
     println!("es      Elasticsearch/OpenSearch via scroll, mapping-driven schema");
+    println!("tsdb    Prometheus/Thanos blocks (v1/v2 index, XOR/histogram chunks, tombstones)");
     println!();
     println!("planned sqlite, mysql, parquet passthrough (see docs/RATIONALE.md)");
 }
@@ -466,6 +580,7 @@ mod tests {
             delimiter: None,
             sample_rows: 10_000,
             es: EsArgs::default(),
+            tsdb: TsdbArgs::default(),
         };
         let err = config_from(&args).expect_err("needs index");
         assert!(err.to_string().contains("index"));

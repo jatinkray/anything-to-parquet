@@ -5,9 +5,10 @@ flag that silently does something else.
 
 ## Sources
 
-- **Local files and Elasticsearch only.** No `s3://`/`gs://`/`az://` input or
-  output yet. Writing to object storage needs multipart, retries and a
-  different atomicity story; it is deliberately not faked.
+- **No `s3://` output yet.** Writing to object storage needs multipart, retries
+  and a different atomicity story; it is deliberately not faked. (`s3://`,
+  `gs://` and `az://` *input* is supported for TSDB prefixes, which the reader
+  stages to local disk.)
 - **No SQLite, MySQL, Postgres, Kafka, S3 log buckets.** Listed as roadmap in
   `atp sources`. Each new source must pass the same conformance tests (schema,
   pagination and cancellation) before it ships.
@@ -53,6 +54,30 @@ flag that silently does something else.
   `_source`, arrays as JSON text).
 - **No delta/incremental sync.** Each run is an independent query; there is no
   "everything since last run" tracking.
+
+## Prometheus / Thanos TSDB
+
+- **Index format v1 and v2 only.** Index v3 is rejected with a clear message.
+- **Native histogram chunks are unrepresentable** as one float column. The run
+  fails; `--tsdb-on-error skip` omits those series and the log/manifest note it.
+  This matches `tsdb2parqtel`.
+- **Series without `__name__` are skipped** (no metric name, no useful row).
+- **Wide shape can be very wide.** Real blocks expose 200+ label names across
+  metrics; `wide` writes a column for every one, null where absent. Use
+  `series` (default) or `long` when that is wasteful.
+- **Stale markers are dropped by default** (`--tsdb-stale keep` to keep the
+  NaN). Block metadata counts include them, so the row count can be slightly
+  lower than `meta.json`'s `numSamples`.
+- **Overlapping blocks duplicate samples.** A Prometheus block directory is
+  normally non-overlapping; a bucket with copies or overlapping compactions will
+  produce duplicate rows. There is no dedup across blocks beyond the
+  replica-label option.
+- **Remote prefixes are copied first.** `s3://`/`gs://`/`az://` blocks are staged
+  into a temp dir before conversion; peak local disk equals the block set.
+  Streaming from object storage is a roadmap item.
+- **No rollups, compaction or per-series verification.** Those remain in
+  `tsdb2parqtel`; the shared `series_fingerprint` is the join key. `atp verify`
+  proves Parquet ↔ manifest, not Parquet ↔ source samples.
 
 ## Output
 

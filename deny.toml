@@ -5,6 +5,8 @@ ignore = [
     # chrono is a mandatory dependency of arrow/parquet 60; the advisory is
     # "unmaintained", not a vulnerability, and no fixed version exists.
     { id = "RUSTSEC-2026-0543", reason = "transitive dependency of arrow 60; unmaintained, not exploitable" },
+    # same chrono chain, pulled through object_store's humantime dependency
+    { id = "RUSTSEC-2026-0542", reason = "humantime is pulled by object_store through chrono; unmaintained, not exploitable" },
 ]
 
 [licenses]

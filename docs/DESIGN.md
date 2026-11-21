@@ -3,7 +3,7 @@
 ## One engine, two front-ends
 
 ```
-source (csv | jsonl | elasticsearch)
+source (csv | jsonl | elasticsearch | tsdb)
    │  pages of Vec<Value> aligned with the source's own column list
    ▼
 engine::run
@@ -17,7 +17,9 @@ ParquetSink
 _manifest.json  (schemas, files, rows, bytes, xxh3 digests)
 ```
 
-The CLI and the TUI both call `atp_core::engine::run`. The TUI owns no
+The engine takes a `Box<dyn Source>`: the CLI decides which reader to open
+(CSV, JSONL, Elasticsearch, or TSDB via `atp-tsdb`), so adding a source never
+touches the engine. The CLI and the TUI both call `atp_core::engine::run`. The TUI owns no
 conversion logic: `atp_core::tui::App` is a state machine with unit-tested
 transitions, and `crates/atp/src/ui.rs` only renders it and shuttles messages.
 Anything the TUI can do, the CLI can do with flags, and vice versa.
@@ -82,6 +84,23 @@ added the same way, typed from the first non-null value seen.
   `path:line`.
 - Nested objects flattened to dotted names; arrays kept as JSON text.
 - Column order is first-seen order; late keys are appended.
+
+### Prometheus/Thanos TSDB (`crates/atp-tsdb`)
+
+- Reader vendored from `tsdb2parqtel` (`crates/atp-tsdb/PROVENANCE.md`): index
+  v1/v2, XOR/XOR2/histogram chunks via the MIT `tsdb-reader` crate, tombstones,
+  Thanos external labels and downsampled-block selection.
+- The adapter streams `SeriesRecord`s from a dedicated thread through a two-slot
+  channel, so memory is bounded by one series plus one batch regardless of how
+  many series a block holds. Dropping the receiver stops the scan at the next
+  series boundary.
+- Rows are samples. `--tsdb-shape series` writes `timestamp, metric, value,
+  series_fingerprint`; `wide` adds one column per label name; `long` adds a JSON
+  labels column. `series_fingerprint` is the same xxh3-64 identity
+  `tsdb2parqtel` writes, so datasets from either tool reconcile by series.
+- `--tsdb-from/--tsdb-to`, selectors, block ULIDs, stale-marker policy,
+  on-error policy and replica-label dedup all map onto the reader's
+  `SourceOptions`; nothing is re-implemented in the adapter.
 
 ### Elasticsearch (`.../es.rs`)
 
@@ -183,7 +202,7 @@ against `total_rows`. Any divergence is a problem and exits 4.
 ## Concurrency and memory
 
 The engine is a single async task; sources are `async` so Elasticsearch I/O does
-not block. Memory is bounded by: one page (≤ 8,192 rows), one `BatchBuilder`
+not block, and the TSDB reader runs on its own thread with a bounded channel. Memory is bounded by: one page (≤ 8,192 rows), one `BatchBuilder`
 buffer per schema segment, one Arrow row group per open partition, and
 `max_open_files` × writer buffers. Measured: 41 MB peak RSS for 5M rows; 211 MB
 for a 615-column JSONL schema.
@@ -206,6 +225,11 @@ opt out explicitly).
   byte-identical reruns, strict/loose widening, `dt=_unknown`, `--max-rows`.
 - CLI (`crates/atp/tests/cli.rs`): exit codes, JSON on stdout with progress on
   stderr, verify round-trip, missing manifest, strict failure.
+- TSDB (`crates/atp-tsdb`): the vendored reader keeps its own fixture tests
+  (index v1/v2, Thanos downsampling, native histograms, property tests on
+  varints/decoding) plus adapter tests over a real 35,354-series block:
+  wide/long shapes, matcher filtering, windowing, missing `__name__`, and three
+  end-to-end conversions through the engine with manifest verification.
 - TUI: state machine unit tests plus `make tui-smoke`, which drives the real
   binary through a PTY (`script`), types a path, presses Enter and Ctrl-C, and
   asserts the rendered frames contain the expected screens.
