@@ -98,17 +98,15 @@ async fn event_loop(terminal: &mut ratatui::DefaultTerminal, app: &mut App) -> R
             },
             Action::Inspect => {
                 let args = source_args(app);
-                match crate::cli::build_source(&args) {
-                    Ok(source) => {
-                        let tx = tx.clone();
-                        app.status = "reading schema and sample rows…".to_string();
-                        tokio::spawn(async move {
-                            let result = engine::preview(source, 50).await;
-                            let _ = tx.send(Msg::Preview(result));
-                        });
-                    }
-                    Err(err) => app.fail(err.to_string()),
-                }
+                let tx = tx.clone();
+                app.status = "reading schema and sample rows…".to_string();
+                tokio::spawn(async move {
+                    let result = match build_source_blocking(args).await {
+                        Ok(source) => engine::preview(source, 50).await,
+                        Err(err) => Err(err),
+                    };
+                    let _ = tx.send(Msg::Preview(result));
+                });
             }
             Action::Run => {
                 let Some(job) = app.job() else {
@@ -117,14 +115,8 @@ async fn event_loop(terminal: &mut ratatui::DefaultTerminal, app: &mut App) -> R
                 };
                 let out = job.out.clone();
                 let args = source_args(app);
-                match crate::cli::build_source(&args) {
-                    Ok(source) => {
-                        if source.timestamp_column().is_none()
-                            && !matches!(job.partition, atp_core::sink::Partition::None)
-                        {
-                            app.fail("time partitioning needs a timestamp column");
-                            continue;
-                        }
+                {
+                    {
                         let opts = RunOptions {
                             out: out.clone(),
                             partition: job.partition,
@@ -142,7 +134,21 @@ async fn event_loop(terminal: &mut ratatui::DefaultTerminal, app: &mut App) -> R
                         let (event_tx, mut event_rx) = tokio::sync::mpsc::channel(64);
                         let ui_tx = tx.clone();
                         tokio::spawn(async move {
-                            let result = engine::run(source, opts, Some(event_tx), flag).await;
+                            let result = match build_source_blocking(args).await {
+                                Ok(source)
+                                    if source.timestamp_column().is_none()
+                                        && !matches!(
+                                            opts.partition,
+                                            atp_core::sink::Partition::None
+                                        ) =>
+                                {
+                                    Err(atp_core::Error::msg(
+                                        "time partitioning needs a timestamp column",
+                                    ))
+                                }
+                                Ok(source) => engine::run(source, opts, Some(event_tx), flag).await,
+                                Err(err) => Err(err),
+                            };
                             let _ = ui_tx.send(Msg::Done(result));
                         });
                         let forward = tx.clone();
@@ -152,12 +158,19 @@ async fn event_loop(terminal: &mut ratatui::DefaultTerminal, app: &mut App) -> R
                             }
                         });
                     }
-                    Err(err) => app.fail(err.to_string()),
                 }
             }
             Action::None => {}
         }
     }
+}
+
+/// Building a source can parse an index or stage a remote prefix; keep it off
+/// the render thread so the TUI never freezes on I/O.
+async fn build_source_blocking(args: SourceArgs) -> Result<Box<dyn atp_core::source::Source>> {
+    tokio::task::spawn_blocking(move || crate::cli::build_source(&args))
+        .await
+        .map_err(|e| Error::msg(format!("source task failed: {e}")))?
 }
 
 fn source_args(app: &App) -> SourceArgs {

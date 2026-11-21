@@ -62,7 +62,7 @@ pub struct SourceArgs {
     pub tsdb: TsdbArgs,
 }
 
-#[derive(Args, Clone, Default)]
+#[derive(Args, Clone)]
 pub struct TsdbArgs {
     /// Row shape: `series` (compact), `wide` (one column per label) or `long` (labels as JSON)
     #[arg(long, default_value = "series", value_name = "series|wide|long")]
@@ -94,6 +94,23 @@ pub struct TsdbArgs {
     /// Comma-separated label names that identify replicas to deduplicate
     #[arg(long, value_name = "LABELS")]
     pub tsdb_dedup_replica_labels: Option<String>,
+}
+
+impl Default for TsdbArgs {
+    fn default() -> Self {
+        TsdbArgs {
+            tsdb_shape: "series".to_string(),
+            tsdb_from: None,
+            tsdb_to: None,
+            tsdb_block: Vec::new(),
+            tsdb_match: Vec::new(),
+            tsdb_stale: "drop".to_string(),
+            tsdb_on_error: "fail".to_string(),
+            tsdb_external_labels: "include".to_string(),
+            tsdb_downsample: "prefer-raw".to_string(),
+            tsdb_dedup_replica_labels: None,
+        }
+    }
 }
 
 #[derive(Args, Clone, Default)]
