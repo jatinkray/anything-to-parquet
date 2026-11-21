@@ -69,6 +69,31 @@ An Elasticsearch index of the same events would be larger than the JSON text
 because it stores postings, doc values and `_source` for search. That comparison
 is not measured here and is not claimed.
 
+## Prometheus block — 5.55 million samples
+
+Dataset: `crates/atp-tsdb/tests/fixtures/testblock`, a real 35,354-series block
+from the MIT-licensed `tsdb` crate v0.3.3 (block range
+2022-04-15T06:43:23.777Z–07:59:59.999Z, `numSamples` 5,551,013). It is test data
+that ships with the repository, so the run is reproducible with no download.
+
+Command: `atp convert crates/atp-tsdb/tests/fixtures/testblock --out … --partition hour`
+
+| Shape | Rows written | Output | Wall clock | Peak RSS | Columns |
+|---|---:|---:|---:|---:|---:|
+| `series` (default) | 5,550,882 | 3,965,225 B (3.78 MiB) | 3.80 s | 90,576 KiB | 4 |
+| `wide` (2-minute window) | 142,084 | 888,390 B | 1.58 s | 173,156 KiB | 206 |
+
+Notes that matter:
+
+- The row count is 131 lower than `meta.json`'s sample count because stale markers
+  are dropped by default (Prometheus writes a reserved NaN when a series
+  disappears). `--tsdb-stale keep` writes them as NaN and recovers the count.
+- The `wide` shape exposes every label name in the block (206), so peak RSS grows
+  with column count, not row count. This is why `series` is the default and
+  `wide` is opt-in.
+- A single series' samples are materialised before paging (the reader's contract),
+  so memory is bounded by the largest series plus one batch.
+
 ## Real Elasticsearch verification (correctness, not throughput)
 
 Run on 2026-11-21 against Elasticsearch **9.1.0** in Docker (single node, no
@@ -100,6 +125,7 @@ Two defects were found by this run and fixed before release:
 
 - Elasticsearch scroll throughput (depends on cluster, shard count, network and
   `--page-size`; adding a fake-server benchmark would measure the fake server).
+- Remote object-store staging throughput for TSDB prefixes (network-bound).
 - Object storage upload throughput (not implemented).
 - Concurrency: the engine converts in one task; there is no parallel scan yet.
 - Compaction: the sink bounds file size; it does not merge existing files.
