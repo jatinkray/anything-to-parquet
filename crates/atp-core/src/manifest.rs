@@ -52,10 +52,20 @@ impl Manifest {
         root.join(MANIFEST_NAME)
     }
 
+    pub fn to_bytes(&self) -> Result<Vec<u8>> {
+        Ok(serde_json::to_vec_pretty(self)?)
+    }
+
     pub fn write(&self, root: &Path) -> Result<PathBuf> {
+        Manifest::write_bytes(root, &self.to_bytes()?)
+    }
+
+    /// Write pre-serialised manifest bytes the same way local runs always have:
+    /// `.tmp` then rename, so readers never see a half-written manifest.
+    pub fn write_bytes(root: &Path, bytes: &[u8]) -> Result<PathBuf> {
         let path = Manifest::path_in(root);
         let tmp = root.join(format!("{MANIFEST_NAME}.tmp"));
-        std::fs::write(&tmp, serde_json::to_vec_pretty(self)?)?;
+        std::fs::write(&tmp, bytes)?;
         std::fs::rename(&tmp, &path)?;
         Ok(path)
     }

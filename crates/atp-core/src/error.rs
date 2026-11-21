@@ -28,6 +28,8 @@ pub enum Error {
     },
     #[error("source error: {0}")]
     Source(String),
+    #[error("object store: {0}")]
+    ObjectStore(String),
     #[error("verification failed: {0}")]
     Verify(String),
     #[error("cancelled")]
@@ -53,12 +55,16 @@ impl Error {
         Error::Source(s.into())
     }
 
+    pub fn object_store(s: impl Into<String>) -> Self {
+        Error::ObjectStore(s.into())
+    }
+
     /// Process exit code that matches the documented CLI contract.
     pub fn exit_code(&self) -> i32 {
         match self {
             Error::SchemaConflict { .. } | Error::BadTimestamp { .. } => 3,
             Error::Verify(_) => 4,
-            Error::Http(_) | Error::Source(_) => 5,
+            Error::Http(_) | Error::Source(_) | Error::ObjectStore(_) => 5,
             Error::Cancelled => 130,
             _ => 1,
         }

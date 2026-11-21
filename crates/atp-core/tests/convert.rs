@@ -14,6 +14,10 @@ use atp_core::source::{self, SourceConfig, SourceKind};
 use atp_core::Error;
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 
+fn local_manifest(summary: &atp_core::engine::Summary) -> PathBuf {
+    summary.local_manifest.clone().expect("local manifest")
+}
+
 fn write(path: &Path, body: &str) {
     std::fs::write(path, body).expect("write fixture");
 }
@@ -83,7 +87,7 @@ async fn converts_csv_with_day_partitions_and_a_verifiable_manifest() {
     assert_eq!(summary.rows, 60);
     assert!(summary.files >= 2, "expected one file per day");
 
-    let files = all_parquet(summary.manifest.parent().expect("parent"));
+    let files = all_parquet(local_manifest(&summary).parent().expect("parent"));
     assert_eq!(files.len(), summary.files);
     let mut total = 0;
     for file in &files {
@@ -97,7 +101,7 @@ async fn converts_csv_with_day_partitions_and_a_verifiable_manifest() {
     }
     assert_eq!(total, 60);
 
-    let report = manifest::verify(&summary.manifest).expect("verify");
+    let report = manifest::verify(&local_manifest(&summary)).expect("verify");
     assert!(report.ok, "{}", report.summary());
     assert_eq!(report.rows_on_disk, 60);
     assert_eq!(report.files_checked, summary.files);
@@ -136,7 +140,7 @@ async fn rerunning_the_same_input_produces_identical_files() {
         )
         .await
         .expect("convert");
-        let manifest = manifest::Manifest::read(&summary.manifest).expect("read manifest");
+        let manifest = manifest::Manifest::read(&local_manifest(&summary)).expect("read manifest");
         digests.push(
             manifest
                 .files
@@ -176,13 +180,17 @@ async fn loose_mode_widens_and_strict_mode_refuses() {
         "expected schema segments, got {}",
         summary.schemas.len()
     );
-    let manifest = manifest::Manifest::read(&summary.manifest).expect("manifest");
+    let manifest = manifest::Manifest::read(&local_manifest(&summary)).expect("manifest");
     let last = manifest.schemas.last().expect("schema");
     assert_eq!(
         last.fields.iter().find(|f| f.name == "n").expect("n").ty,
         atp_core::Ty::Str
     );
-    assert!(manifest::verify(&summary.manifest).expect("verify").ok);
+    assert!(
+        manifest::verify(&local_manifest(&summary))
+            .expect("verify")
+            .ok
+    );
 
     // Strict: refuses and still leaves a `failed` manifest with what it wrote.
     let mut strict = RunOptions::new(dir.path().join("strict"));
@@ -249,5 +257,9 @@ async fn max_rows_limits_and_keeps_the_manifest_consistent() {
     .await
     .expect("convert");
     assert_eq!(summary.rows, 100);
-    assert!(manifest::verify(&summary.manifest).expect("verify").ok);
+    assert!(
+        manifest::verify(&local_manifest(&summary))
+            .expect("verify")
+            .ok
+    );
 }

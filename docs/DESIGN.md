@@ -155,6 +155,14 @@ added the same way, typed from the first non-null value seen.
   most `.tmp` files, which `verify` ignores and a rerun overwrites.
 - Hashing: bytes flow through `HashingWriter` (xxh3-64) as Parquet writes them, so
   the digest describes exactly the file on disk, and no second pass is needed.
+- Remote outputs (`s3://`, `gs://`, `az://`): the same sink writes into a
+  temporary local root, and every file that closes is uploaded with
+  `object_store` (single `PUT` under 10 MiB, multipart above it). Closed files
+  are pumped at the end of every source page; the remainder and then
+  `_manifest.json` are uploaded at finish. Object keys are the same relative
+  paths as the local tree, so a downloaded prefix verifies identically.
+  Uploads are retried by `object_store`; a crash leaves committed objects plus
+  a manifest whose `status` says what is durable.
 
 ## Manifest
 

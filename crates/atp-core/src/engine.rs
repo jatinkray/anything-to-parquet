@@ -17,12 +17,14 @@ use arrow_array::{Array, TimestampMillisecondArray};
 use crate::batch::{BatchBuilder, PushOutcome};
 use crate::error::{Error, Result};
 use crate::manifest::{Manifest, ManifestOptions, MANIFEST_NAME};
-use crate::sink::{partition_label, ParquetSink, Partition, SinkOptions};
+use crate::output::{Output, RemoteStore};
+use crate::sink::{partition_label, FileRecord, ParquetSink, Partition, SinkOptions};
 use crate::source::{Source, SourceInfo};
 use crate::value::{Schema, Ty, Value};
 
 #[derive(Clone, Debug)]
 pub struct RunOptions {
+    /// Local directory or `s3://`/`gs://`/`az://` prefix.
     pub out: PathBuf,
     pub partition: Partition,
     pub strict: bool,
@@ -74,7 +76,10 @@ pub struct Summary {
     pub bytes: u64,
     pub files: usize,
     pub schemas: Vec<Schema>,
-    pub manifest: PathBuf,
+    /// Local path or `s3://`/`gs://`/`az://` URI of the manifest.
+    pub manifest: String,
+    /// The manifest path on this machine, for local outputs.
+    pub local_manifest: Option<PathBuf>,
     pub elapsed: Duration,
     pub source: SourceInfo,
 }
@@ -100,7 +105,29 @@ pub async fn run(
             schema: schema.clone(),
         },
     );
-    let mut sink = ParquetSink::open(&opts.out, opts.sink.clone(), schema.clone())?;
+    let output = Output::parse(&opts.out)?;
+    let staging = match &output {
+        Output::Local(_) => None,
+        Output::Remote(_) => Some(
+            tempfile::Builder::new()
+                .prefix("atp-output-")
+                .tempdir()
+                .map_err(|error| {
+                    Error::msg(format!("creating upload staging directory: {error}"))
+                })?,
+        ),
+    };
+    let (root, remote) = match (&output, &staging) {
+        (Output::Local(path), _) => (path.clone(), None),
+        (Output::Remote(spec), Some(temp)) => (temp.path().to_path_buf(), Some(spec.connect()?)),
+        (Output::Remote(_), None) => {
+            return Err(Error::msg(
+                "internal: remote output without a staging directory",
+            ))
+        }
+    };
+    let mut uploaded = 0usize;
+    let mut sink = ParquetSink::open(&root, opts.sink.clone(), schema.clone())?;
     let mut builder = BatchBuilder::new(schema.clone(), opts.batch_rows);
     let mut map = ColumnMap::default();
     let mut last_columns: Vec<String> = Vec::new();
@@ -241,6 +268,13 @@ pub async fn run(
                 elapsed_ms: started.elapsed().as_millis(),
             },
         );
+        if let Some(store) = &remote {
+            if let Err(e) = upload_pending(store, &root, sink.files(), &mut uploaded).await {
+                status = "failed";
+                failure = Some(e);
+                break;
+            }
+        }
     }
 
     if failure.is_none() {
@@ -266,6 +300,11 @@ pub async fn run(
             return Err(failure.unwrap_or(e));
         }
     };
+    if let Some(store) = &remote {
+        if let Err(e) = upload_pending(store, &root, &sink_result.files, &mut uploaded).await {
+            return Err(failure.unwrap_or(e));
+        }
+    }
     let elapsed = started.elapsed();
     let manifest = Manifest {
         tool: format!("anything-to-parquet {}", env!("CARGO_PKG_VERSION")),
@@ -288,13 +327,26 @@ pub async fn run(
         total_rows: sink_result.rows,
         total_bytes: sink_result.bytes,
     };
-    let manifest_path = manifest.write(&opts.out)?;
+    let manifest_bytes = manifest.to_bytes()?;
+    let (manifest_display, local_manifest) = match &remote {
+        Some(store) => {
+            if let Err(e) = store.put_bytes(MANIFEST_NAME, manifest_bytes).await {
+                return Err(failure.unwrap_or(e));
+            }
+            (format!("{}/{}", store.display(), MANIFEST_NAME), None)
+        }
+        None => {
+            let path = Manifest::write_bytes(&root, &manifest_bytes)?;
+            (path.display().to_string(), Some(path))
+        }
+    };
     let summary = Summary {
         rows: manifest.total_rows,
         bytes: manifest.total_bytes,
         files: manifest.files.len(),
         schemas: manifest.schemas.clone(),
-        manifest: manifest_path,
+        manifest: manifest_display,
+        local_manifest,
         elapsed,
         source: info,
     };
@@ -308,6 +360,23 @@ pub async fn run(
         Some(e) => Err(e),
         None => Ok(summary),
     }
+}
+
+/// Upload every file that closed since the previous pump. Files are only
+/// appended to `sink.files()`, so `uploaded` is a valid cursor.
+async fn upload_pending(
+    store: &RemoteStore,
+    root: &Path,
+    files: &[FileRecord],
+    uploaded: &mut usize,
+) -> Result<()> {
+    for record in &files[*uploaded..] {
+        store
+            .put_file(&root.join(&record.path), &record.path)
+            .await?;
+        *uploaded += 1;
+    }
+    Ok(())
 }
 
 fn emit(events: &Option<tokio::sync::mpsc::Sender<Event>>, event: Event) {
