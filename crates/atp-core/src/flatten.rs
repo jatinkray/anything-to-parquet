@@ -7,6 +7,7 @@
 //! accident.
 
 use serde_json::{Map, Value as Json};
+use std::sync::Arc;
 
 use crate::value::{parse_timestamp, Value};
 
@@ -54,7 +55,7 @@ fn scalar(json: &Json, dotted_key: &str, timestamp: Option<&str>) -> Value {
             Some(i) => Value::I64(i),
             None => match n.as_f64() {
                 Some(f) => Value::F64(f),
-                None => Value::Str(n.to_string()),
+                None => Value::Str(Arc::from(n.to_string())),
             },
         },
         Json::String(s) => {
@@ -63,13 +64,13 @@ fn scalar(json: &Json, dotted_key: &str, timestamp: Option<&str>) -> Value {
                     Some(ms) => Value::Timestamp(ms),
                     // Keep the raw text; the engine reports a typed error with
                     // the column and record number when strict mode is on.
-                    None => Value::Str(s.clone()),
+                    None => Value::Str(Arc::from(s.as_str())),
                 }
             } else {
-                Value::Str(s.clone())
+                Value::Str(Arc::from(s.as_str()))
             }
         }
-        Json::Array(_) | Json::Object(_) => Value::Str(json.to_string()),
+        Json::Array(_) | Json::Object(_) => Value::Str(Arc::from(json.to_string())),
     }
 }
 
@@ -85,7 +86,7 @@ pub fn flatten_with_timestamp(
         values.iter().find_map(|(k, v)| {
             if k == name {
                 match v {
-                    Value::Str(s) => Some(s.clone()),
+                    Value::Str(s) => Some(s.to_string()),
                     Value::Null => None,
                     _ => None,
                 }

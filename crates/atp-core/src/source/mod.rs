@@ -16,6 +16,7 @@ pub enum SourceKind {
     Csv,
     Jsonl,
     Es,
+    Tsdb,
 }
 
 impl SourceKind {
@@ -24,6 +25,7 @@ impl SourceKind {
             "csv" | "tsv" => SourceKind::Csv,
             "jsonl" | "ndjson" | "json" => SourceKind::Jsonl,
             "es" | "elasticsearch" | "opensearch" => SourceKind::Es,
+            "tsdb" | "prometheus" | "thanos" => SourceKind::Tsdb,
             _ => return None,
         })
     }
@@ -33,15 +35,40 @@ impl SourceKind {
             SourceKind::Csv => "csv",
             SourceKind::Jsonl => "jsonl",
             SourceKind::Es => "elasticsearch",
+            SourceKind::Tsdb => "tsdb",
         }
     }
 }
 
-/// Detect the source kind from the location: URLs are Elasticsearch, `-` is
-/// stdin (JSONL by convention), otherwise the extension decides.
+/// Detect the source kind from the location:
+/// - `http(s)://` is Elasticsearch;
+/// - `s3://`, `gs://`, `az://` are Prometheus block prefixes;
+/// - a directory holding `meta.json` (or blocks one level down) is TSDB;
+/// - otherwise the file extension decides.
 pub fn detect_kind(location: &str) -> Option<SourceKind> {
     if location.starts_with("http://") || location.starts_with("https://") {
         return Some(SourceKind::Es);
+    }
+    if ["s3://", "gs://", "az://"]
+        .iter()
+        .any(|scheme| location.starts_with(scheme))
+    {
+        return Some(SourceKind::Tsdb);
+    }
+    let path = std::path::Path::new(location);
+    if path.is_dir() {
+        if path.join("meta.json").is_file() {
+            return Some(SourceKind::Tsdb);
+        }
+        if let Ok(entries) = std::fs::read_dir(path) {
+            for entry in entries.flatten() {
+                let child = entry.path();
+                if child.is_dir() && child.join("meta.json").is_file() {
+                    return Some(SourceKind::Tsdb);
+                }
+            }
+        }
+        return None;
     }
     let lower = location.to_ascii_lowercase();
     let base = lower.strip_suffix(".gz").unwrap_or(&lower);
@@ -144,6 +171,9 @@ pub fn open(config: &SourceConfig) -> Result<Box<dyn Source>> {
         SourceKind::Csv => Ok(Box::new(csv_source::CsvSource::open(config)?)),
         SourceKind::Jsonl => Ok(Box::new(jsonl::JsonlSource::open(config)?)),
         SourceKind::Es => Ok(Box::new(es::EsSource::new(config)?)),
+        SourceKind::Tsdb => Err(Error::msg(
+            "TSDB blocks are opened by the atp-tsdb crate; use the atp binary",
+        )),
     }
 }
 
@@ -171,7 +201,12 @@ mod tests {
 
     #[test]
     fn kind_round_trips_through_text() {
-        for k in [SourceKind::Csv, SourceKind::Jsonl, SourceKind::Es] {
+        for k in [
+            SourceKind::Csv,
+            SourceKind::Jsonl,
+            SourceKind::Es,
+            SourceKind::Tsdb,
+        ] {
             assert_eq!(SourceKind::parse(k.as_str()), Some(k));
         }
         assert_eq!(SourceKind::parse("parquet"), None);

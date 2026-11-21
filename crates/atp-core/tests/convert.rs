@@ -10,7 +10,7 @@ use std::sync::Arc;
 use atp_core::engine::{self, RunOptions};
 use atp_core::manifest;
 use atp_core::sink::Partition;
-use atp_core::source::{SourceConfig, SourceKind};
+use atp_core::source::{self, SourceConfig, SourceKind};
 use atp_core::Error;
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 
@@ -71,9 +71,14 @@ async fn converts_csv_with_day_partitions_and_a_verifiable_manifest() {
     cfg.timestamp_column = Some("@timestamp".to_string());
     let mut opts = RunOptions::new(dir.path().join("out"));
     opts.partition = Partition::Day;
-    let summary = engine::run(cfg, opts, None, Arc::new(AtomicBool::new(false)))
-        .await
-        .expect("convert");
+    let summary = engine::run(
+        source::open(&cfg).expect("source"),
+        opts,
+        None,
+        Arc::new(AtomicBool::new(false)),
+    )
+    .await
+    .expect("convert");
 
     assert_eq!(summary.rows, 60);
     assert!(summary.files >= 2, "expected one file per day");
@@ -123,9 +128,14 @@ async fn rerunning_the_same_input_produces_identical_files() {
         let out = dir.path().join(run);
         let mut opts = RunOptions::new(&out);
         opts.partition = Partition::Hour;
-        let summary = engine::run(cfg.clone(), opts, None, Arc::new(AtomicBool::new(false)))
-            .await
-            .expect("convert");
+        let summary = engine::run(
+            source::open(&cfg).expect("source"),
+            opts,
+            None,
+            Arc::new(AtomicBool::new(false)),
+        )
+        .await
+        .expect("convert");
         let manifest = manifest::Manifest::read(&summary.manifest).expect("read manifest");
         digests.push(
             manifest
@@ -153,7 +163,7 @@ async fn loose_mode_widens_and_strict_mode_refuses() {
     // Loose: widens to f64 then to text; both segments are recorded.
     let out = dir.path().join("loose");
     let summary = engine::run(
-        cfg.clone(),
+        source::open(&cfg).expect("source"),
         RunOptions::new(&out),
         None,
         Arc::new(AtomicBool::new(false)),
@@ -177,9 +187,14 @@ async fn loose_mode_widens_and_strict_mode_refuses() {
     // Strict: refuses and still leaves a `failed` manifest with what it wrote.
     let mut strict = RunOptions::new(dir.path().join("strict"));
     strict.strict = true;
-    let err = engine::run(cfg, strict, None, Arc::new(AtomicBool::new(false)))
-        .await
-        .expect_err("strict must fail");
+    let err = engine::run(
+        source::open(&cfg).expect("source"),
+        strict,
+        None,
+        Arc::new(AtomicBool::new(false)),
+    )
+    .await
+    .expect_err("strict must fail");
     assert!(matches!(err, Error::SchemaConflict { .. }), "{err}");
     assert_eq!(err.exit_code(), 3);
     let manifest = manifest::Manifest::read(&dir.path().join("strict/_manifest.json"))
@@ -200,9 +215,14 @@ async fn timestamps_in_rows_without_time_land_in_an_explicit_partition() {
     cfg.timestamp_column = Some("@timestamp".to_string());
     let mut opts = RunOptions::new(dir.path().join("out"));
     opts.partition = Partition::Day;
-    let summary = engine::run(cfg, opts, None, Arc::new(AtomicBool::new(false)))
-        .await
-        .expect("convert");
+    let summary = engine::run(
+        source::open(&cfg).expect("source"),
+        opts,
+        None,
+        Arc::new(AtomicBool::new(false)),
+    )
+    .await
+    .expect("convert");
     assert_eq!(summary.rows, 2);
     assert!(dir.path().join("out/dt=_unknown").is_dir());
 }
@@ -220,9 +240,14 @@ async fn max_rows_limits_and_keeps_the_manifest_consistent() {
     let mut opts = RunOptions::new(dir.path().join("out"));
     opts.max_rows = Some(100);
     opts.batch_rows = 16;
-    let summary = engine::run(cfg, opts, None, Arc::new(AtomicBool::new(false)))
-        .await
-        .expect("convert");
+    let summary = engine::run(
+        source::open(&cfg).expect("source"),
+        opts,
+        None,
+        Arc::new(AtomicBool::new(false)),
+    )
+    .await
+    .expect("convert");
     assert_eq!(summary.rows, 100);
     assert!(manifest::verify(&summary.manifest).expect("verify").ok);
 }

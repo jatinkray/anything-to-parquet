@@ -31,6 +31,7 @@ docs-check:
 	@test -f docs/DESIGN.md
 	@test -f docs/LIMITATIONS.md
 	@test -f docs/BENCHMARKS.md
+	@test -f docs/TSDB.md
 	@test -f LICENSE
 	@echo "documentation files present"
 

@@ -137,7 +137,7 @@ impl Source for JsonlSource {
             rows_estimate: None,
             bytes_estimate: std::fs::metadata(&self.path).ok().map(|m| m.len()),
             notes: vec![format!(
-                "sampled {} rows for types; nested objects flattened with '.'",
+                "types from up to {} rows; nested objects flattened with '.'",
                 self.sample_rows
             )],
         }

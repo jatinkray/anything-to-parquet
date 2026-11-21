@@ -98,12 +98,12 @@ async fn event_loop(terminal: &mut ratatui::DefaultTerminal, app: &mut App) -> R
             },
             Action::Inspect => {
                 let args = source_args(app);
-                match crate::cli::config_from(&args) {
-                    Ok(cfg) => {
+                match crate::cli::build_source(&args) {
+                    Ok(source) => {
                         let tx = tx.clone();
                         app.status = "reading schema and sample rows…".to_string();
                         tokio::spawn(async move {
-                            let result = engine::preview(cfg, 50).await;
+                            let result = engine::preview(source, 50).await;
                             let _ = tx.send(Msg::Preview(result));
                         });
                     }
@@ -117,12 +117,9 @@ async fn event_loop(terminal: &mut ratatui::DefaultTerminal, app: &mut App) -> R
                 };
                 let out = job.out.clone();
                 let args = source_args(app);
-                match crate::cli::config_from(&args) {
-                    Ok(mut cfg) => {
-                        if let Some(ts) = job.timestamp_column.clone() {
-                            cfg.timestamp_column = Some(ts);
-                        }
-                        if cfg.timestamp_column.is_none()
+                match crate::cli::build_source(&args) {
+                    Ok(source) => {
+                        if source.timestamp_column().is_none()
                             && !matches!(job.partition, atp_core::sink::Partition::None)
                         {
                             app.fail("time partitioning needs a timestamp column");
@@ -145,7 +142,7 @@ async fn event_loop(terminal: &mut ratatui::DefaultTerminal, app: &mut App) -> R
                         let (event_tx, mut event_rx) = tokio::sync::mpsc::channel(64);
                         let ui_tx = tx.clone();
                         tokio::spawn(async move {
-                            let result = engine::run(cfg, opts, Some(event_tx), flag).await;
+                            let result = engine::run(source, opts, Some(event_tx), flag).await;
                             let _ = ui_tx.send(Msg::Done(result));
                         });
                         let forward = tx.clone();
@@ -177,6 +174,7 @@ fn source_args(app: &App) -> SourceArgs {
         delimiter: None,
         sample_rows: 10_000,
         es: EsArgs::default(),
+        tsdb: crate::cli::TsdbArgs::default(),
     }
 }
 
@@ -279,6 +277,24 @@ fn draw_source(frame: &mut Frame, area: Rect, app: &App) {
 fn source_kind_hint(input: &str) -> Option<&'static str> {
     if input.starts_with("http://") || input.starts_with("https://") {
         return Some("elasticsearch");
+    }
+    if ["s3://", "gs://", "az://"]
+        .iter()
+        .any(|scheme| input.starts_with(scheme))
+    {
+        return Some("tsdb");
+    }
+    let path = std::path::Path::new(input);
+    if path.is_dir()
+        && (path.join("meta.json").is_file()
+            || std::fs::read_dir(path).is_ok_and(|entries| {
+                entries.flatten().any(|entry| {
+                    let child = entry.path();
+                    child.is_dir() && child.join("meta.json").is_file()
+                })
+            }))
+    {
+        return Some("tsdb");
     }
     let lower = input.to_ascii_lowercase();
     if lower.ends_with(".csv") || lower.ends_with(".tsv") || lower.ends_with(".csv.gz") {
