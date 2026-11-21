@@ -12,6 +12,7 @@ pub mod engine;
 pub mod error;
 pub mod flatten;
 pub mod manifest;
+pub mod output;
 pub mod sink;
 pub mod source;
 pub mod tui;

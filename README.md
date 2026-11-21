@@ -7,7 +7,7 @@
 [**Quickstart**](#quickstart) · [**Sources**](#sources) · [**Output contract**](#the-output-contract) · [**Benchmarks**](#benchmarks) · [**CLI**](#cli-reference) · [**Docs**](#documentation-map) · [**Roadmap**](#roadmap--non-goals)
 
 [![CI](https://github.com/jatinkray/anything-to-parquet/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/jatinkray/anything-to-parquet/actions/workflows/ci.yml)
-[![Tests](https://img.shields.io/badge/tests-84%20passing-brightgreen.svg)](#development)
+[![Tests](https://img.shields.io/badge/tests-88%20passing-brightgreen.svg)](#development)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.89%2B-orange.svg)](https://www.rust-lang.org)
 [![Platforms](https://img.shields.io/badge/platforms-linux%20(ci)%20%C2%B7%20build%20from%20source-lightgrey.svg)](#install)
@@ -109,6 +109,13 @@ manifest /…/lake/_manifest.json
 verify   atp verify ./lake
 ```
 
+The same run straight into object storage (credentials from `AWS_*`; `gs://` and
+`az://` use their provider variables):
+
+```bash
+atp convert examples/events.csv --out s3://my-bucket/lake/events --timestamp @timestamp --partition day
+```
+
 ### 3. Prove it
 
 ```bash
@@ -149,9 +156,14 @@ lake/
   dt=2026-11-21/hour=11/part-00-00001.parquet
 ```
 
+The tree is identical for local and object-store runs: `--out s3://bucket/prefix`
+puts those keys under `prefix/`. Files are staged locally, uploaded as they
+close, and `_manifest.json` is uploaded last; a completed object is never a
+partial Parquet file.
+
 | Guarantee | How |
 |---|---|
-| **No partial files** | written as `*.parquet.tmp`, renamed only when the footer is complete |
+| **No partial files** | written as `*.parquet.tmp`, renamed only when the footer is complete; object-store uploads commit as one `PUT`/multipart upload |
 | **Bounded memory** | streaming pages, one row group per partition, capped open files |
 | **No silent type loss** | `i64 → f64 → str`, `timestamp ↔ epoch millis`; every schema segment is recorded; `--strict` fails with exit 3 instead |
 | **Provable output** | every file's xxh3-64 digest and row count is hashed while writing and rechecked by `atp verify` |
@@ -185,8 +197,8 @@ Measured with the scripts in [`bench/`](bench); full method and caveats in
 
 ```
 atp inspect <source> [--limit N] [--json]
-atp convert <source> --out <dir> [output and source options]
-atp verify <dir> [--json]
+atp convert <source> --out <dir|s3://bucket/prefix> [output and source options]
+atp verify <dir> [--json]        # local outputs; download a remote prefix first
 atp sources
 atp tui [source]
 ```
@@ -254,9 +266,9 @@ ratatui front-end. Details: [docs/DESIGN.md](docs/DESIGN.md).
 ## Roadmap / non-goals
 
 **Planned:** PIT + `search_after` for crash-safe Elasticsearch resume · parallel
-slices · Parquet `LIST` columns for JSON arrays · file compaction · `s3://`
-output with multipart and per-file checksums · per-series TSDB reconciliation
-inside `atp verify`.
+slices · Parquet `LIST` columns for JSON arrays · file compaction · `atp verify`
+directly against object stores · per-series TSDB reconciliation inside
+`atp verify`.
 
 **Not planned:** streaming ingestion (that is Vector's job), a query engine (use
 DuckDB/Athena), importing into Elasticsearch (one-way export), being a log
@@ -272,11 +284,17 @@ covered by tests. The gaps are listed in
 
 ```bash
 make lint        # cargo fmt --check + clippy -D warnings (workspace-wide)
-make test        # 84 tests: unit, stub-server, engine integration, CLI contract
+make test        # 88 tests: unit, stub-server, engine integration, CLI contract
 make docs-check  # required docs and brand assets exist
 make tui-smoke   # drives the real TUI through a pty and asserts its screens
+make live-s3     # real bucket: CSV, partitions, schema rolls, file cap, cancel
 make bench       # reproducible 5M-row CSV benchmark
 ```
+
+`make live-s3` needs `ATP_LIVE_S3_BUCKET` and provider credentials (it sources
+`aws.env` when present); it uploads to a unique prefix, re-reads every object,
+checks digests, byte counts and Parquet row counts against the manifest, then
+deletes the prefix. CI runs the same tests with `ATP_LIVE_S3` unset, so they skip.
 
 CI runs the same plus a static musl build, `cargo deny` and `cargo audit`.
 The test suite includes real fixture blocks: a 35,354-series Prometheus block

@@ -459,14 +459,16 @@ fn draw_done(frame: &mut Frame, area: Rect, app: &App) {
         ]),
         Line::from(vec![
             Span::styled("verify ", Style::default().fg(Color::DarkGray)),
-            Span::raw(format!(
-                "atp verify {}",
-                summary
-                    .manifest
-                    .parent()
-                    .map(|p| p.display().to_string())
-                    .unwrap_or_default()
-            )),
+            Span::raw(match &summary.local_manifest {
+                Some(local) => format!(
+                    "atp verify {}",
+                    local
+                        .parent()
+                        .map(|p| p.display().to_string())
+                        .unwrap_or_default()
+                ),
+                None => format!("manifest {}", summary.manifest),
+            }),
         ]),
         Line::raw(""),
         Line::styled("Enter to quit", Style::default().fg(Color::DarkGray)),

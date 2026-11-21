@@ -1,4 +1,4 @@
-.PHONY: fmt test lint build release bench bench-jsonl tui-smoke docs-check ci
+.PHONY: fmt test lint build release bench bench-jsonl tui-smoke live-s3 docs-check ci
 
 fmt:
 	cargo fmt --all -- --check
@@ -24,6 +24,17 @@ bench-jsonl:
 
 tui-smoke:
 	bash scripts/tui-smoke.sh
+
+# Real bucket, real credentials. Reads aws.env when present; never runs in CI.
+live-s3:
+	@test -n "$$ATP_LIVE_S3_BUCKET" || (echo "ATP_LIVE_S3_BUCKET is not set" >&2; exit 2)
+	set -a; if [ -f aws.env ]; then . ./aws.env; fi; set +a; \
+	prefix="$${ATP_LIVE_S3_PREFIX:-atp-live}/$$(date +%s)"; \
+	ATP_LIVE_S3=1 ATP_LIVE_S3_PREFIX="$$prefix" \
+		cargo test -p anything-to-parquet --test live_s3 -- --test-threads=1; \
+	status=$$?; \
+	aws s3 rm --recursive "s3://$$ATP_LIVE_S3_BUCKET/$$prefix/" >/dev/null 2>&1 || true; \
+	exit $$status
 
 docs-check:
 	@test -f README.md

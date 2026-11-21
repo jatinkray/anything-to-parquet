@@ -5,10 +5,6 @@ flag that silently does something else.
 
 ## Sources
 
-- **No `s3://` output yet.** Writing to object storage needs multipart, retries
-  and a different atomicity story; it is deliberately not faked. (`s3://`,
-  `gs://` and `az://` *input* is supported for TSDB prefixes, which the reader
-  stages to local disk.)
 - **No SQLite, MySQL, Postgres, Kafka, S3 log buckets.** Listed as roadmap in
   `atp sources`. Each new source must pass the same conformance tests (schema,
   pagination and cancellation) before it ships.
@@ -18,6 +14,23 @@ flag that silently does something else.
   files may have a narrower type than the last.
 - **gzip only.** No zstd/xz/bzip2 input; `.gz` is transparent.
 - **No stdin.** `atp -` is not supported; use a named pipe if you must.
+
+## Output
+
+- **Object-store output is staged locally first.** `s3://`, `gs://` and `az://`
+  outputs write the Parquet tree under a temporary directory and upload each
+  finished file; peak scratch disk equals the output size. Objects only appear
+  after a committed `PUT`/multipart upload, and `_manifest.json` is uploaded
+  last.
+- **`atp verify` reads local directories only.** For a remote run, download the
+  tree (or check the manifest with another Parquet reader) before verifying.
+- **Runs are not incremental.** Writing into a prefix that already holds a run
+  leaves the old objects in place when the new run writes fewer files; the new
+  `_manifest.json` lists only the new run, exactly as with local directories.
+  Do not point two concurrent runs at one prefix.
+- **Rate limits and credentials come from the provider SDK chain.** S3 uses
+  `AWS_*` environment variables (or the instance/task role), GCS `GOOGLE_*`,
+  Azure `AZURE_*`; a missing region or permission fails the run, not silently.
 
 ## JSON shape
 

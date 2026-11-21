@@ -161,7 +161,7 @@ pub struct InspectArgs {
 pub struct ConvertArgs {
     #[command(flatten)]
     pub source: SourceArgs,
-    /// Output directory (created if missing)
+    /// Output directory (created if missing) or `s3://`/`gs://`/`az://` prefix
     #[arg(long, short)]
     pub out: PathBuf,
     /// Partition layout: none, day or hour
@@ -490,8 +490,14 @@ async fn convert(args: ConvertArgs) -> Result<()> {
             human_bytes(summary.bytes),
             summary.elapsed.as_secs_f64()
         );
-        println!("manifest {}", summary.manifest.display());
-        println!("verify   atp verify {}", args.out.display());
+        println!("manifest {}", summary.manifest);
+        match &summary.local_manifest {
+            Some(local) => {
+                let root = local.parent().unwrap_or(&args.out);
+                println!("verify   atp verify {}", root.display());
+            }
+            None => println!("verify   download the manifest to verify (object-store output)"),
+        }
     }
     Ok(())
 }

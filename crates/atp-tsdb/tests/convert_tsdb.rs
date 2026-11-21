@@ -14,6 +14,10 @@ use atp_tsdb::{TsdbOptions, TsdbShape, TsdbSource};
 
 const BLOCK_START_MS: i64 = 1_650_005_022_282;
 
+fn local_manifest(summary: &atp_core::engine::Summary) -> PathBuf {
+    summary.local_manifest.clone().expect("local manifest")
+}
+
 fn fixture() -> String {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/testblock")
@@ -45,7 +49,7 @@ async fn converts_a_block_window_to_hour_partitions() {
 
     assert!(summary.rows > 10_000, "rows={}", summary.rows);
     assert_eq!(summary.source.kind, "tsdb");
-    let report = manifest::verify(&summary.manifest).expect("verify");
+    let report = manifest::verify(&local_manifest(&summary)).expect("verify");
     assert!(report.ok, "{}", report.summary());
     assert_eq!(report.rows_on_disk, summary.rows);
 
@@ -60,7 +64,7 @@ async fn converts_a_block_window_to_hour_partitions() {
         "label columns missing"
     );
 
-    let manifest = manifest::Manifest::read(&summary.manifest).expect("manifest");
+    let manifest = manifest::Manifest::read(&local_manifest(&summary)).expect("manifest");
     let options = manifest.options;
     assert_eq!(options.partition, Partition::Hour);
     assert_eq!(options.timestamp_column.as_deref(), Some("timestamp"));
@@ -105,7 +109,11 @@ async fn long_shape_writes_one_json_labels_column() {
             "labels".to_string(),
         ]
     );
-    assert!(manifest::verify(&summary.manifest).expect("verify").ok);
+    assert!(
+        manifest::verify(&local_manifest(&summary))
+            .expect("verify")
+            .ok
+    );
 }
 
 #[tokio::test]
